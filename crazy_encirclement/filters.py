@@ -13,7 +13,7 @@ def omega_func_modelA(theta: float) -> np.ndarray:
     return np.asarray([0.3 * np.sin(6 * theta) * np.cos(6 * theta), 0.3, 0.])
 
 def omega_func_modelB(theta: float) -> np.ndarray:
-    return np.asarray([np.sin(theta)*np.cos(theta), 0., 0.])
+    return np.asarray([1.0 * np.sin(theta)*np.cos(theta), 0., 0.])
 
 def omega_func_modelC(theta: float) -> np.ndarray:
     return np.asarray([0.6 * np.cos(2 * theta), 0.6 * np.cos(theta)**2, 0.])
@@ -185,7 +185,7 @@ class FilterGPS(BaseFilter):
     def update(self, y: np.ndarray):
         # Measurement Jacobian
         radius: float = np.exp(self.s)
-        Re: np.ndarray = self.build_Re(self.embedding_fn, self.get_theta(self.Rc))
+        Re: np.ndarray = self.build_Re(self.embedding_fn, self.get_phase(self.Rc))
         H_theta: np.ndarray = -self.Rc.T @ (Re @ self.Rc @ skew(self.e_x)) * radius    # body frame
         H_r: np.ndarray = (self.Rc.T @ (Re @ self.Rc @ self.e_x )) * radius            # inertial frame
         H: np.ndarray = np.hstack((H_theta, H_r))

@@ -218,7 +218,7 @@ class Circle_distortion(Node):
         ''' Callback to update the filter with GPS measurements. '''
         if self.state != 2:
             return  # Only update during encirclement state
-        y = np.array([gps_position.x, gps_position.y, gps_position.z])
+        y = np.array([gps_position.x, gps_position.y, gps_position.z]).reshape((3, 1))
         phase, position = self.filter.update(y)
 
         # Updating internal parameters
