@@ -6,7 +6,7 @@ from crazyflie_interfaces.msg import StringArray, Position
 from std_msgs.msg import Bool
 from std_srvs.srv import Empty
 from std_msgs.msg import Float32
-from filters import FilterGPS, wrap_to_pi, phase_controller
+from crazy_encirclement.filters import FilterGPS, wrap_to_pi, phase_controller
 
 
 class Circle_distortion(Node):
@@ -21,11 +21,11 @@ class Circle_distortion(Node):
 
         # Parameters
         self.declare_parameter('robot', 'C20')
-        self.declare_parameter('number_of_agents', '4')
+        self.declare_parameter('number_of_agents', 4)
         self.declare_parameter('initial_phase', '0.0')
-        self.declare_parameter('radius_nominal', '1.0')
-        self.declare_parameter('omega_nominal', '0.8')
-        self.declare_parameter('k_phi', '8.0')
+        self.declare_parameter('radius_nominal', 1.0)
+        self.declare_parameter('omega_nominal', 0.8)
+        self.declare_parameter('k_phi', 8.0)
         self.declare_parameter('embedding_fn_name', 'modelB')
 
         self.robot    = str(self.get_parameter('robot').value)
@@ -41,7 +41,6 @@ class Circle_distortion(Node):
         self.declare_parameter('V', [0.1, 0.1, 0.1])
         self.declare_parameter('predict_hz', 50.0)
         self.declare_parameter('update_hz', 10.0)
-        self.declare_parameter('embedding_fn_name', 'modelB')
 
          # Get filter parameters
         P_list = self.get_parameter('P').value
@@ -122,7 +121,7 @@ class Circle_distortion(Node):
             'P': P_list,
             'Q': Q_list,
             'V': V_list,
-            'radius_guess': self.radius + np.random.normal(0, 0.15),
+            'radius_guess': self.radius_nominal + np.random.normal(0, 0.15),
             'phase_guess': self.initial_phase + np.random.normal(0, 0.1),
         }
         self.filter = FilterGPS(self.robot, self.embedding_fn_name, self.filter_params, self)
@@ -330,7 +329,7 @@ class Circle_distortion(Node):
 
     def hover(self):
         ''' Hovering procedure at the hover height. '''
-        self.phase_pub.publish(self.phi_cur)
+        # self.phase_pub.publish(self.phi_cur)
         msg = Position()
         msg.x = self.initial_pose[0]
         msg.y = self.initial_pose[1]

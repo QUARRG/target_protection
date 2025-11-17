@@ -41,9 +41,9 @@ class GPSNode(Node):
         # Add Gaussian noise to the position of the specified robot
         for pose in msg.poses:
             if pose.name == self.robot:
-                self.position.x = pose.position.x
-                self.position.y = pose.position.y
-                self.position.z = pose.position.z
+                self.position.x = pose.pose.position.x
+                self.position.y = pose.pose.position.y
+                self.position.z = pose.pose.position.z
                 self.position.yaw = 0.0  # Assuming yaw is not provided by Vicon
         
         # Publish the Vicon position without noise
@@ -52,17 +52,19 @@ class GPSNode(Node):
     def _timer_callback(self):
         '''Timer callback to publish the noisy GPS position at the specified rate.'''
         noise = np.random.multivariate_normal(np.zeros(3), np.diag(np.square(self.V)))
-        position = self.position.copy()
+        position = self.position
         position.x += noise[0]
         position.y += noise[1]
         position.z += noise[2]
         position.yaw = 0.0  # Assuming yaw is not provided by Vicon
         self.gps_position_pub.publish(position)
 
-
-if __name__ == '__main__':
+def main():
+    '''Main function to initialize the GPS node and start spinning.'''
     rclpy.init()
     gps_node = GPSNode()
     rclpy.spin(gps_node)
     gps_node.destroy_node()
     rclpy.shutdown()
+if __name__ == '__main__':
+    main()

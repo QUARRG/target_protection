@@ -109,16 +109,16 @@ def parse_yaml(context):
             name=robot+'_circle_distortion',
             output='screen',
             parameters=[{'robot': robot, 'number_of_agents': len(robots_list)} \
-                        + filter_yaml_content.get('circle_distortion', {}).get('ros__parameters', {})],
+                        | filter_yaml_content.get('circle_distortion', {}).get('ros__parameters', {})],
             ))
         
         # GPS Node for each robot
         Nodes.append(Node(
             package='crazy_encirclement',
-            executable='gps.py',
+            executable='gps',
             name=robot+'_gps_node',
             output='screen',
-            parameters=[{'robot': robot} + filter_yaml_content.get('circle_distortion', {}).get('ros__parameters', {})],
+            parameters=[{'robot': robot} | filter_yaml_content.get('circle_distortion', {}).get('ros__parameters', {})],
         ))
 
         # Watch dog node for each robot
