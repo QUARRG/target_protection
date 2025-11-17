@@ -1,8 +1,14 @@
 
 circle_distortion:
   ros__parameters:
+    # Kalman filter parameters
     P: [0.0001, 0.0001, 0.25, 0.0001]
     Q: [0.0, 0.0, 0.001, 0.0001]
     V: [0.1, 0.1, 0.1]
-    predict_hz: 50.0
+    predict_hz: 10.0
     update_hz: 10.0
+    # Parameters for circle distortion
+    embedding_fn_name: modelB
+    radius_nominal: 1.0
+    omega_nominal: 0.8
+    k_phi: 8.0

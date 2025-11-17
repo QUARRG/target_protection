@@ -1,5 +1,6 @@
 import os
 import yaml
+import numpy as np
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
@@ -88,7 +89,7 @@ def parse_yaml(context):
             parameters= server_params,
         ))
 
-    # Filter configuration
+    # Filter configuration file
     filter_yaml = os.path.join(
         get_package_share_directory('crazy_encirclement'),
         'config',
@@ -97,15 +98,21 @@ def parse_yaml(context):
     with open(filter_yaml, 'r') as ymlfile:
         filter_yaml_content = yaml.safe_load(ymlfile)
 
+    # Listing all enabled robots
     robots_list = [robot for robot in crazyflies['robots'] if crazyflies['robots'][robot]['enabled']]
+
     for robot in robots_list:
+        # Nodes for each robot
         Nodes.append(Node(
             package='crazy_encirclement',
             executable='circle_distortion',
             name=robot+'_circle_distortion',
             output='screen',
-            parameters=[{'robot': robot, 'number_of_agents': len(robots_list)} + filter_yaml_content.get('circle_distortion', {}).get('ros__parameters', {})],
+            parameters=[{'robot': robot, 'number_of_agents': len(robots_list)} \
+                        + filter_yaml_content.get('circle_distortion', {}).get('ros__parameters', {})],
             ))
+        
+        # GPS Node for each robot
         Nodes.append(Node(
             package='crazy_encirclement',
             executable='gps.py',
@@ -113,6 +120,8 @@ def parse_yaml(context):
             output='screen',
             parameters=[{'robot': robot} + filter_yaml_content.get('circle_distortion', {}).get('ros__parameters', {})],
         ))
+
+        # Watch dog node for each robot
         Nodes.append(Node(
             package='crazyflie',
             executable='watch_dog.py',
@@ -121,6 +130,7 @@ def parse_yaml(context):
             parameters=[{'robot_prefix': robot}]
         ))
     
+    # Agents order node
     Nodes.append(Node(
         package='crazy_encirclement',
         executable='agents_order',

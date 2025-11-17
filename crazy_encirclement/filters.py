@@ -66,6 +66,25 @@ def orthonormalize(R: np.ndarray) -> np.ndarray:
     '''
     U, S, Vt = np.linalg.svd(R)
     return U @ Vt
+
+
+def phase_controller(phase_ego, phase_leader, phase_follower, phi_dot_nominal, k_p=1.0):
+    """
+    A simple PD controller to adjust the phase angle of the ego vehicle
+    based on the angles of the vehicles ahead and behind.
+    """
+    error_ahead  = phase_ego - phase_leader
+    error_behind = phase_ego - phase_follower
+
+    # Normalize errors to the range [-pi, pi]
+    error_ahead  = wrap_to_pi(error_ahead)
+    error_behind = wrap_to_pi(error_behind)
+
+    eps = 1e-6  # small constant to avoid division by zero
+
+    control_signal = phi_dot_nominal + k_p * (1/(error_ahead + eps) + 1/(error_behind + eps))
+
+    return control_signal
 # ----------------------------------------------------------------------
 
 
@@ -84,7 +103,7 @@ class BaseFilter:
         self.P: np.ndarray = np.diag(np.square(self.params.get('P', np.zeros(4))))
         self.Q: np.ndarray = np.diag(np.square(self.params.get('Q', np.zeros(4))))
         self.V: np.ndarray = np.diag(np.square(self.params.get('V', np.zeros(3))))
-        self.Rc: np.ndarray = self.build_Rc(self.params.get('phase_guess', 0.0))
+        self.Rc: np.ndarray = self.build_Rc(wrap_to_pi(self.params.get('phase_guess', 0.0)))
         self.radius: float = self.params.get('radius_guess', 2.0)
         self.s: float = np.log(self.radius)
         self.e_x: np.ndarray = np.asarray([[1.], [0.], [0.]])
@@ -154,6 +173,8 @@ class BaseFilter:
         self.pub_phase.publish(phase_msg)
         # self.node.get_logger().info(f'Published pose for agent {self.name}')
 
+        return phase_msg.data, pose_msg.pose.position
+
 
 class FilterGPS(BaseFilter):
     ''' LIEKF for encirclement tasks using GPS-like measurements.
@@ -197,4 +218,6 @@ class FilterGPS(BaseFilter):
         pose_msg, phase_msg = self.build_pose_phase_msgs()
         self.pub_pose.publish(pose_msg)
         self.pub_phase.publish(phase_msg)
+
+        return phase_msg.data, pose_msg.pose.position
 # ----------------------------------------------------------------------

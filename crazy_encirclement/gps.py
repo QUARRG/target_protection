@@ -44,6 +44,7 @@ class GPSNode(Node):
                 self.position.x = pose.position.x
                 self.position.y = pose.position.y
                 self.position.z = pose.position.z
+                self.position.yaw = 0.0  # Assuming yaw is not provided by Vicon
         
         # Publish the Vicon position without noise
         self.vicon_position_pub.publish(self.position)
@@ -55,7 +56,9 @@ class GPSNode(Node):
         position.x += noise[0]
         position.y += noise[1]
         position.z += noise[2]
+        position.yaw = 0.0  # Assuming yaw is not provided by Vicon
         self.gps_position_pub.publish(position)
+
 
 if __name__ == '__main__':
     rclpy.init()

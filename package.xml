@@ -13,6 +13,7 @@
   <test_depend>python3-pytest</test_depend>
 
   <depend>crazyflie_interfaces</depend>
+  <depend>std_msgs</depend>
   <depend>geometry_msgs</depend>
   <depend>motion_capture_tracking_interfaces</depend>
   <depend>crazyflie</depend>
