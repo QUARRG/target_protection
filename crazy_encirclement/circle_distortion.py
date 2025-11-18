@@ -2,6 +2,7 @@ import rclpy
 import time
 import numpy as np
 from rclpy.node import Node
+from geometry_msgs.msg import PoseStamped
 from crazyflie_interfaces.msg import StringArray, Position
 from std_msgs.msg import Bool
 from std_srvs.srv import Empty
@@ -101,7 +102,7 @@ class Circle_distortion(Node):
 
         # Subscription to Vicon positions of the robot that are coming from the gps node
         self.create_subscription(
-            Position, f'/{self.robot}/vicon_position',
+            PoseStamped, f'/{self.robot}/vicon_position',
             self._poses_changed,
             10
         )
@@ -132,7 +133,7 @@ class Circle_distortion(Node):
 
         # Create subscriber for filter updates using the GPS measurements
         self.create_subscription(
-            Position,
+            PoseStamped,
             f'/{self.robot}/gps_position',
             self.update_callback,
             10
@@ -143,7 +144,8 @@ class Circle_distortion(Node):
 
         # Publishers for phi_dot
         self.publisher_phi_dot = self.create_publisher(Float32, f'/{self.robot}/filtered/omega', 10)
-        # self.publish_phi_diff = self.create_publisher(Float32,'/'+ self.robot + '/phi_diff', 10)
+        self.publish_phi_diff_leader = self.create_publisher(Float32, f'/{self.robot}/filtered/phase_diff/leader', 10)
+        self.publish_phi_diff_follower = self.create_publisher(Float32, f'/{self.robot}/filtered/phase_diff/follower', 10)
 
         # self.publisher_w.publish(self.wd)
         #initiating some variables
@@ -188,7 +190,12 @@ class Circle_distortion(Node):
 
                     # Updating internal parameters
                     self.phases[1] = phase
-                    target_r = np.array([position.x, position.y, position.z])
+                    self.publish_phi_diff_leader.publish(Float32(data=wrap_to_pi(self.phases[0] - self.phases[1])))
+                    self.publish_phi_diff_follower.publish(Float32(data=wrap_to_pi(self.phases[2] - self.phases[1])))
+
+                    target_r = np.array([position.pose.position.x,
+                                         position.pose.position.y,
+                                         position.pose.position.z + self.hover_height])
 
                     # phi, target_r, wd, phi_diff = self.embedding.targets(self.current_pose, self.phases)
                     # self.phi_diff.data = phi_diff
@@ -214,46 +221,53 @@ class Circle_distortion(Node):
         except KeyboardInterrupt:
             self.info('Exiting open loop command node')
     
-    def update_callback(self, gps_position: Position):
+    def update_callback(self, gps_pose: PoseStamped):
         ''' Callback to update the filter with GPS measurements. '''
         if self.state != 2:
             return  # Only update during encirclement state
-        y = np.array([gps_position.x, gps_position.y, gps_position.z]).reshape((3, 1))
+        y = np.array([gps_pose.pose.position.x,
+                      gps_pose.pose.position.y,
+                      gps_pose.pose.position.z]).reshape((3, 1))
         phase, position = self.filter.update(y)
 
         # Updating internal parameters
         self.phases[1] = phase
-        target_r = np.array([position.x, position.y, position.z])
+        self.publish_phi_diff_leader.publish(Float32(data=wrap_to_pi(self.phases[0] - self.phases[1])))
+        self.publish_phi_diff_follower.publish(Float32(data=wrap_to_pi(self.phases[2] - self.phases[1])))
+
+        target_r = np.array([position.pose.position.x,
+                             position.pose.position.y,
+                             position.pose.position.z + self.hover_height])
         self.send_position(target_r)
 
-    def _poses_changed(self, robot_pose: Position):
+    def _poses_changed(self, robot_pose: PoseStamped):
         """ Topic update callback to the motion capture lib's
             poses topic to send through the external position
             to the crazyflie. All steps based on the Vicon position.
         """
         # Initialize the initial pose and phase if not already set using vicon data
         if not self.has_initial_pose:      
-            self.initial_pose[0] = robot_pose.x
-            self.initial_pose[1] = robot_pose.y
-            self.initial_pose[2] = robot_pose.z   
+            self.initial_pose[0] = robot_pose.pose.position.x
+            self.initial_pose[1] = robot_pose.pose.position.y
+            self.initial_pose[2] = robot_pose.pose.position.z   
             self.initial_phase = wrap_to_pi(np.arctan2(self.initial_pose[1], self.initial_pose[0]))   
             self.takeoff_traj(4)
             self.has_initial_pose = True    
             
         # Update current pose if not landing
         elif not self.land_flag:
-            self.current_pose[0] = robot_pose.x
-            self.current_pose[1] = robot_pose.y
-            self.current_pose[2] = robot_pose.z
+            self.current_pose[0] = robot_pose.pose.position.x
+            self.current_pose[1] = robot_pose.pose.position.y
+            self.current_pose[2] = robot_pose.pose.position.z
 
         # Set final pose when landing is commanded
         elif (self.has_final == False) and (self.land_flag == True):
             self.final_pose = np.zeros(3)
             self.info("Landing...")
-            self.final_pose[0] = robot_pose.x
-            self.final_pose[1] = robot_pose.y
-            self.final_pose[2] = robot_pose.z
-            self.landing_traj(2)
+            self.final_pose[0] = robot_pose.pose.position.x
+            self.final_pose[1] = robot_pose.pose.position.y
+            self.final_pose[2] = robot_pose.pose.position.z
+            self.landing_traj(3)
             self.has_final = True
 
     def _phase_callback_leader(self, msg):

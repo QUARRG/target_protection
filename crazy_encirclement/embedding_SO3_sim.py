@@ -17,7 +17,7 @@ class Embedding():
         self.initial_phase = np.zeros(self.n)
         self.Rot_des = np.zeros((3,3,self.n))
         self.Rot_act = np.zeros((3,3,self.n))
-        self.scale = 0.3 #scale the distortion around the x axis
+        self.scale = 0.2 #scale the distortion around the x axis
         self.hover_height = 0.8
         self.count = 0
         for i in range(self.n):
@@ -150,11 +150,11 @@ class Embedding():
     
 
     def calc_wx(self,phi):
-        return self.scale*(np.sin(phi)*np.cos(phi)-np.sin(phi)**3)
+        return self.scale*(np.cos(3*phi)*np.sin(phi))#self.scale*(np.sin(phi)*np.cos(phi)-np.sin(phi)**3)
         #return self.scale*np.cos(phi)*np.sin(phi)
     
     def calc_wy(self,phi):
-        return self.scale*np.cos(phi)*np.sin(phi)
+        return 0.5*self.scale#*np.cos(phi)*np.sin(phi)
 
     def phi_dot_desired(self,phi_i, phi_j, phi_k, phi_dot_des, k,i):
 

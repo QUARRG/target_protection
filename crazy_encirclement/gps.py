@@ -1,6 +1,7 @@
 import rclpy
 import numpy as np
 from rclpy.node import Node
+from geometry_msgs.msg import PoseStamped
 from motion_capture_tracking_interfaces.msg import NamedPoseArray
 from crazyflie_interfaces.msg import Position
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
@@ -28,36 +29,38 @@ class GPSNode(Node):
             self._callback, qos_profile
         )
 
-        self.position = Position()
+        self.pose = PoseStamped()
         self.timer = self.create_timer(1.0 / self.update_hz, self._timer_callback)
-        self.gps_position_pub   = self.create_publisher(Position, f'/{self.robot}/gps_position', 10)
-        self.vicon_position_pub = self.create_publisher(Position, f'/{self.robot}/vicon_position', 10)
+        self.gps_position_pub   = self.create_publisher(PoseStamped, f'/{self.robot}/gps_position', 10)
+        self.vicon_position_pub = self.create_publisher(PoseStamped, f'/{self.robot}/vicon_position', 10)
 
     def _callback(self, msg: NamedPoseArray):
         '''Callback function to process incoming NamedPoseArray messages from Vicon and publish noisy GPS positions.'''
-        self.position = Position()
-        self.position.header.stamp = self.get_clock().now().to_msg()
+        # self.pose = PoseStamped()
+        self.pose.header.stamp = self.get_clock().now().to_msg()
+        
     
         # Add Gaussian noise to the position of the specified robot
         for pose in msg.poses:
             if pose.name == self.robot:
-                self.position.x = pose.pose.position.x
-                self.position.y = pose.pose.position.y
-                self.position.z = pose.pose.position.z
-                self.position.yaw = 0.0  # Assuming yaw is not provided by Vicon
+                self.pose.header.frame_id = msg.header.frame_id
+                self.pose.pose.position.x = pose.pose.position.x
+                self.pose.pose.position.y = pose.pose.position.y
+                self.pose.pose.position.z = pose.pose.position.z
         
         # Publish the Vicon position without noise
-        self.vicon_position_pub.publish(self.position)
+        self.vicon_position_pub.publish(self.pose)
 
     def _timer_callback(self):
         '''Timer callback to publish the noisy GPS position at the specified rate.'''
         noise = np.random.multivariate_normal(np.zeros(3), np.diag(np.square(self.V)))
-        position = self.position
-        position.x += noise[0]
-        position.y += noise[1]
-        position.z += noise[2]
-        position.yaw = 0.0  # Assuming yaw is not provided by Vicon
-        self.gps_position_pub.publish(position)
+        pose = PoseStamped()
+        pose.header.frame_id = self.pose.header.frame_id
+        pose.header.stamp = self.get_clock().now().to_msg()
+        pose.pose.position.x = self.pose.pose.position.x + noise[0]
+        pose.pose.position.y = self.pose.pose.position.y + noise[1]
+        pose.pose.position.z = self.pose.pose.position.z + noise[2]
+        self.gps_position_pub.publish(pose)
 
 def main():
     '''Main function to initialize the GPS node and start spinning.'''

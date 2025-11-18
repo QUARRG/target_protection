@@ -8,7 +8,7 @@ circle_distortion:
     predict_hz: 10.0
     update_hz: 10.0
     # Parameters for circle distortion
-    embedding_fn_name: modelB
+    embedding_fn_name: modelD
     radius_nominal: 1.0
-    omega_nominal: 0.8
-    k_phi: 8.0
+    omega_nominal: 1.0
+    k_phi: 0.5

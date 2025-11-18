@@ -13,13 +13,13 @@ def omega_func_modelA(theta: float) -> np.ndarray:
     return np.asarray([0.3 * np.sin(6 * theta) * np.cos(6 * theta), 0.3, 0.])
 
 def omega_func_modelB(theta: float) -> np.ndarray:
-    return np.asarray([1.0 * np.sin(theta)*np.cos(theta), 0., 0.])
+    return np.asarray([0.9 * np.sin(theta)*np.cos(theta), 0., 0.])
 
 def omega_func_modelC(theta: float) -> np.ndarray:
     return np.asarray([0.6 * np.cos(2 * theta), 0.6 * np.cos(theta)**2, 0.])
 
 def omega_func_modelD(theta: float) -> np.ndarray:
-    return np.asarray([0.9 * np.cos(3 * theta) * np.sin(theta), 0.5 * 0.9, 0.])
+    return np.asarray([0.2 * np.cos(3 * theta) * np.sin(theta), 0.5 * 0.9, 0.])
 
 REGISTRED_OMEGA_FUNCTIONS = {
     'modelA': omega_func_modelA,
@@ -173,7 +173,7 @@ class BaseFilter:
         self.pub_phase.publish(phase_msg)
         # self.node.get_logger().info(f'Published pose for agent {self.name}')
 
-        return phase_msg.data, pose_msg.pose.position
+        return phase_msg.data, pose_msg
 
 
 class FilterGPS(BaseFilter):
@@ -219,5 +219,5 @@ class FilterGPS(BaseFilter):
         self.pub_pose.publish(pose_msg)
         self.pub_phase.publish(phase_msg)
 
-        return phase_msg.data, pose_msg.pose.position
+        return phase_msg.data, pose_msg
 # ----------------------------------------------------------------------

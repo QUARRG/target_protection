@@ -10,13 +10,12 @@ plt.rcParams.update({
 from mpl_toolkits.mplot3d import Axes3D
 import math
 from scipy.spatial.transform import Rotation as R
-from utils import R3_so3, so3_R3
 from icecream import ic
 import pandas as pd
 import os
 import pickle 
 
-N = 2000
+N = 200
 r = 1
 k_phi = 5
 kx = 5
