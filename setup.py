@@ -27,6 +27,7 @@ setup(
             'crazy_circle = crazy_encirclement.crazy_circle:main',
             'agents_order = crazy_encirclement.agents_order:main',
             'circle_distortion_filter_gps = crazy_encirclement.circle_distortion_filter_gps:main',
+            'circle_distortion_baseline = crazy_encirclement.circle_distortion_baseline:main',
             'gps = crazy_encirclement.gps:main',
         ],
     },

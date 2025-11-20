@@ -220,4 +220,61 @@ class FilterGPS(BaseFilter):
         self.pub_phase.publish(phase_msg)
 
         return phase_msg.data, pose_msg
+
+
+class BaselineFilter(BaseFilter):
+    ''' Baseline filter without state estimation for encirclement tasks.
+    '''
+    def __init__(self, name: str, embedding_fn_name: str, params: dict, node: Node):
+        self.name = name
+        self.embedding_fn_name = embedding_fn_name
+        self.params = params
+        self.node: Node = node
+
+        # Checking embedding function
+        if embedding_fn_name not in REGISTRED_OMEGA_FUNCTIONS:
+            raise ValueError(f"Embedding function '{embedding_fn_name}' is not allowed. Choose from: {list(REGISTRED_OMEGA_FUNCTIONS.keys())}")
+        self.embedding_fn: Callable = REGISTRED_OMEGA_FUNCTIONS[embedding_fn_name]
+
+        # Initialize parameters         
+        self.k_phi: float = self.params.get('k_phi', 0.5)
+        self.omega_nominal: float = self.params.get('omega_nominal', 0.5)
+        self.frame_id: str = self.params.get('frame_id', 'world')
+        self.radius: float = self.params.get('radius_guess', 2.0)
+        self.s: float = np.log(self.radius)
+        self.Rc: np.ndarray = self.build_Rc(wrap_to_pi(self.params.get('phase_guess', 0.0)))
+        self.dt : float = self.params.get('dt', 0.1)
+        self.e_x: np.ndarray = np.asarray([[1.], [0.], [0.]])
+
+        # Publishers
+        self.publisher_omega = self.node.create_publisher(Float32, f'/{self.name}/baseline/omega', 10)
+        self.pub_pose  = self.node.create_publisher(PoseStamped, f'/{self.name}/baseline/pose', 10)
+        self.pub_phase = self.node.create_publisher(Float32, f'/{self.name}/baseline/phase', 10)
+        self.node.info(f'Baseline filter for agent {self.name} initialized.')
+
+        # Initialize by publishing initial pose and phase
+        pose_msg, phase_msg = self.build_pose_phase_msgs()
+        self.pub_pose.publish(pose_msg)
+        self.pub_phase.publish(phase_msg)
+    
+    def predict(self, current_pose: np.ndarray, phases: list[float]):
+        curr_leader_phase, _, curr_follower_phase = phases
+        Re = self.build_Re(self.embedding_fn, curr_ego_phase)
+        p = Re.T.dot(current_pose)
+        curr_ego_phase = np.arctan2(p[1], p[0])
+        omega = phase_controller(curr_ego_phase, curr_leader_phase, curr_follower_phase, self.omega_nominal, self.k_phi)
+        # Update phase
+        self.Rc = exp_SO3(np.asarray([0., 0., omega * self.dt])) @ self.Rc
+        self.Rc = orthonormalize(self.Rc)
+        
+        # Publish predicted pose and phase
+        pose_msg, phase_msg = self.build_pose_phase_msgs()
+        self.pub_pose.publish(pose_msg)
+        self.pub_phase.publish(phase_msg)
+
+        omega_msg = Float32()
+        omega_msg.data = omega
+        self.publisher_omega.publish(omega_msg)
+
+        return phase_msg.data, pose_msg
 # ----------------------------------------------------------------------

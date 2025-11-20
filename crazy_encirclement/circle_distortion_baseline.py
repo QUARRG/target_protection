@@ -7,7 +7,7 @@ from crazyflie_interfaces.msg import StringArray, Position
 from std_msgs.msg import Bool
 from std_srvs.srv import Empty
 from std_msgs.msg import Float32
-from crazy_encirclement.filters import FilterGPS, wrap_to_pi, phase_controller
+from crazy_encirclement.filters import BaselineFilter, wrap_to_pi
 
 
 class CircleDistortion(Node):
@@ -28,8 +28,8 @@ class CircleDistortion(Node):
         self.declare_parameter('omega_nominal', 0.8)
         self.declare_parameter('k_phi', 8.0)
         self.declare_parameter('embedding_fn_name', 'modelB')
-        self.declare_parameter('frame_id', 'world')
         self.declare_parameter('hover_height', 0.9)
+        self.declare_parameter('frame_id', 'world')
 
         self.robot    = str(self.get_parameter('robot').value)
         self.n_agents = int(self.get_parameter('number_of_agents').value)
@@ -37,20 +37,15 @@ class CircleDistortion(Node):
         self.radius_nominal = float(self.get_parameter('radius_nominal').value)
         self.omega_nominal  = float(self.get_parameter('omega_nominal').value)
         self.embedding_fn_name = str(self.get_parameter('embedding_fn_name').value)
-        self.frame_id = str(self.get_parameter('frame_id').value)
         self.hover_height = float(self.get_parameter('hover_height').value)
+        self.frame_id = str(self.get_parameter('frame_id').value)
+
+        # Desired phase difference
+        self.desired_phase_diff = 2.0 * np.pi / self.n_agents
 
         # Filter parameters
-        self.declare_parameter('P', [0.0001, 0.0001, 0.25, 0.0001])
-        self.declare_parameter('Q', [0.0, 0.0, 0.001, 0.0001])
-        self.declare_parameter('V', [0.1, 0.1, 0.1])
         self.declare_parameter('predict_hz', 50.0)
         self.declare_parameter('update_hz', 10.0)
-
-         # Get filter parameters
-        P_list = self.get_parameter('P').value
-        Q_list = self.get_parameter('Q').value
-        V_list = self.get_parameter('V').value
         self.predict_hz = self.get_parameter('predict_hz').value
         self.update_hz  = self.get_parameter('update_hz').value
 
@@ -119,35 +114,27 @@ class CircleDistortion(Node):
             rclpy.spin_once(self, timeout_sec=0.1)
 
         # Create filter instance
-        self.filter_params = {
-            'P': P_list,
-            'Q': Q_list,
-            'V': V_list,
-            'radius_guess': self.radius_nominal + np.random.normal(0, 0.15),
-            'phase_guess': self.initial_phase + np.random.normal(0, 0.1),
-            'frame_id': self.frame_id
+        self.params = {
+            'k_phi': self.k_phi,
+            'embedding_fn_name': self.embedding_fn_name,
+            'omega_nominal': self.omega_nominal,
+            'radius_guess': self.radius_nominal,
+            'phase_guess': self.initial_phase,
+            'frame_id': self.frame_id,
+            'dt': self.timer_period
         }
-        self.filter = FilterGPS(self.robot, self.embedding_fn_name, self.filter_params, self)
+        self.baseline = BaselineFilter(self.robot, self.embedding_fn_name, self.params, self)
 
         # Create subscribers for the other agents' filtered phases
-        self.create_subscription(Float32, f'/{self.leader}/filtered/phase',   self._phase_callback_leader, 1)
-        self.create_subscription(Float32, f'/{self.follower}/filtered/phase', self._phase_callback_follower, 1)
-
-        # Create subscriber for filter updates using the GPS measurements
-        self.create_subscription(
-            PoseStamped,
-            f'/{self.robot}/gps_position',
-            self.update_callback,
-            10
-        )
+        self.create_subscription(Float32, f'/{self.leader}/baseline/phase',   self._phase_callback_leader, 1)
+        self.create_subscription(Float32, f'/{self.follower}/baseline/phase', self._phase_callback_follower, 1)
 
         # Crazyflie position command publisher
         self.position_pub = self.create_publisher(Position, f'/{self.robot}/cmd_position', 10)
 
         # Publishers for phi_dot
-        self.publisher_phi_dot = self.create_publisher(Float32, f'/{self.robot}/filtered/omega', 10)
-        self.publish_phi_diff_leader = self.create_publisher(Float32, f'/{self.robot}/filtered/phase_diff/leader', 10)
-        self.publish_phi_diff_follower = self.create_publisher(Float32, f'/{self.robot}/filtered/phase_diff/follower', 10)
+        self.publish_phase_diff_leader   = self.create_publisher(Float32, f'/{self.robot}/baseline/phase_diff/leader', 10)
+        self.publish_phase_diff_follower = self.create_publisher(Float32, f'/{self.robot}/baseline/phase_diff/follower', 10)
 
         # input("Press Enter to takeoff")
         self.timer = self.create_timer(self.timer_period, self.timer_callback)
@@ -167,19 +154,15 @@ class CircleDistortion(Node):
             
             # Encirclement state
             elif self.state == 2: 
-                if self.has_phase_follower and self.has_phase_leader:
-                    # Computing desired phi_dot based on the leader and follower phases
-                    omega = phase_controller(self.phases[1], self.phases[0], self.phases[2], self.omega_nominal, self.k_phi)
-                    omega_msg = Float32()
-                    omega_msg.data = omega
-                    self.publisher_phi_dot.publish(omega_msg)
-
-                    # Propagating the filter
-                    phase, position = self.filter.predict(omega, self.timer_period)
+                if self.has_phase_follower and self.has_phase_leader:                  
+                    # Propagating the system
+                    current_pose = self.current_pose.copy()
+                    current_pose[2] -= self.hover_height  # Remove height offset
+                    phase, position = self.baseline.predict(current_pose, self.phases, self.timer_period)
 
                     # Updating internal parameters
                     self.phases[1] = phase
-
+                    
                     # Checking phase differences
                     diff_leader = wrap_to_pi(self.phases[0] - self.phases[1])
                     diff_follower = wrap_to_pi(self.phases[2] - self.phases[1])
@@ -206,29 +189,6 @@ class CircleDistortion(Node):
 
         except KeyboardInterrupt:
             self.info('Exiting open loop command node')
-    
-    def update_callback(self, gps_pose: PoseStamped):
-        ''' Callback to update the filter with GPS measurements. '''
-        if self.state != 2:
-            return  # Only update during encirclement state
-        y = np.array([gps_pose.pose.position.x,
-                      gps_pose.pose.position.y,
-                      gps_pose.pose.position.z]).reshape((3, 1))
-        phase, position = self.filter.update(y)
-
-        # Updating internal parameters
-        self.phases[1] = phase
-
-        # Checking phase differences
-        diff_leader = wrap_to_pi(self.phases[0] - self.phases[1])
-        diff_follower = wrap_to_pi(self.phases[2] - self.phases[1])
-        self.publish_phase_diff_leader.publish(Float32(data=diff_leader - self.desired_phase_diff))
-        self.publish_phase_diff_follower.publish(Float32(data=diff_follower - self.desired_phase_diff))
-
-        target_r = np.array([position.pose.position.x,
-                             position.pose.position.y,
-                             position.pose.position.z + self.hover_height])
-        self.send_position(target_r)
 
     def _poses_changed(self, robot_pose: PoseStamped):
         """ Topic update callback to the motion capture lib's
@@ -290,10 +250,12 @@ class CircleDistortion(Node):
                         self.leader = order[i-1]
                         self.follower = order[i+1]
             self.has_order = True
+            # self.info(f"Leader: {self.leader}, Follower: {self.follower}")
 
     def takeoff(self):
         ''' Take-off procedure to reach the hover height. '''
         self.send_position(self.r_takeoff[:, self.i_takeoff])
+        
         # Increment take-off index or switch to hover state
         if self.i_takeoff < len(self.t_takeoff)-1:
             self.i_takeoff += 1
@@ -328,7 +290,6 @@ class CircleDistortion(Node):
 
     def hover(self):
         ''' Hovering procedure at the hover height. '''
-        # self.phase_pub.publish(self.phi_cur)
         msg = Position()
         msg.x = self.initial_pose[0]
         msg.y = self.initial_pose[1]

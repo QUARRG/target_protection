@@ -1,3 +1,4 @@
+
 import os
 import yaml
 import numpy as np
@@ -105,7 +106,7 @@ def parse_yaml(context):
         # Nodes for each robot
         Nodes.append(Node(
             package='crazy_encirclement',
-            executable='circle_distortion_filter_gps',
+            executable='circle_distortion_baseline',
             name=robot+'_circle_distortion',
             output='screen',
             parameters=[{'robot': robot, 'number_of_agents': len(robots_list)} \

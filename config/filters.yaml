@@ -1,5 +1,5 @@
 
-circle_distortion_filter_gps:
+circle_distortion_filters:
   ros__parameters:
     # Kalman filter parameters
     P: [0.0001, 0.0001, 0.25, 0.0001]
@@ -9,6 +9,7 @@ circle_distortion_filter_gps:
     update_hz: 10.0
     # Parameters for circle distortion
     embedding_fn_name: modelD
+    frame_id: world
     hover_height: 0.9    # meters
     radius_nominal: 1.0  # meters
     omega_nominal: 1.0   # radians per second
