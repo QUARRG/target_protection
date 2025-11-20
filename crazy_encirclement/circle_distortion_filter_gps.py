@@ -28,6 +28,7 @@ class Circle_distortion(Node):
         self.declare_parameter('omega_nominal', 0.8)
         self.declare_parameter('k_phi', 8.0)
         self.declare_parameter('embedding_fn_name', 'modelB')
+        self.declare_parameter('hover_height', 0.9)
 
         self.robot    = str(self.get_parameter('robot').value)
         self.n_agents = int(self.get_parameter('number_of_agents').value)
@@ -35,6 +36,7 @@ class Circle_distortion(Node):
         self.radius_nominal = float(self.get_parameter('radius_nominal').value)
         self.omega_nominal  = float(self.get_parameter('omega_nominal').value)
         self.embedding_fn_name = str(self.get_parameter('embedding_fn_name').value)
+        self.hover_height = float(self.get_parameter('hover_height').value)
 
         # Filter parameters
         self.declare_parameter('P', [0.0001, 0.0001, 0.25, 0.0001])
@@ -54,7 +56,6 @@ class Circle_distortion(Node):
         self.reboot_client = self.create_client(Empty, self.robot + '/reboot')
 
         # Flags and variables
-        self.hover_height = 0.9  # meters
         self.timer_period = 1.0 / self.predict_hz
         self.initial_phase = 0.0
         self.initial_pose = np.zeros(3)
