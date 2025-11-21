@@ -247,7 +247,7 @@ class BaselineFilter(BaseFilter):
         self.e_x: np.ndarray = np.asarray([[1.], [0.], [0.]])
 
         # Publishers
-        self.publisher_omega = self.node.create_publisher(Float32, f'/{self.name}/baseline/omega', 10)
+        self.pub_omega = self.node.create_publisher(Float32, f'/{self.name}/baseline/omega', 10)
         self.pub_pose  = self.node.create_publisher(PoseStamped, f'/{self.name}/baseline/pose', 10)
         self.pub_phase = self.node.create_publisher(Float32, f'/{self.name}/baseline/phase', 10)
         self.node.info(f'Baseline filter for agent {self.name} initialized.')
@@ -274,7 +274,7 @@ class BaselineFilter(BaseFilter):
 
         omega_msg = Float32()
         omega_msg.data = omega
-        self.publisher_omega.publish(omega_msg)
+        self.pub_omega.publish(omega_msg)
 
         return phase_msg.data, pose_msg
 # ----------------------------------------------------------------------

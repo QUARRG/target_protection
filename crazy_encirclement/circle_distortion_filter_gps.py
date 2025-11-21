@@ -144,10 +144,10 @@ class CircleDistortion(Node):
         # Crazyflie position command publisher
         self.position_pub = self.create_publisher(Position, f'/{self.robot}/cmd_position', 10)
 
-        # Publishers for phi_dot
-        self.publisher_phi_dot = self.create_publisher(Float32, f'/{self.robot}/filtered/omega', 10)
-        self.publish_phi_diff_leader = self.create_publisher(Float32, f'/{self.robot}/filtered/phase_diff/leader', 10)
-        self.publish_phi_diff_follower = self.create_publisher(Float32, f'/{self.robot}/filtered/phase_diff/follower', 10)
+        # Publishers for phase differences
+        self.publish_omega = self.create_publisher(Float32, f'/{self.robot}/filtered/omega', 10)
+        self.publish_phase_diff_leader = self.create_publisher(Float32, f'/{self.robot}/filtered/phase_diff/leader', 10)
+        self.publish_phase_diff_follower = self.create_publisher(Float32, f'/{self.robot}/filtered/phase_diff/follower', 10)
 
         # input("Press Enter to takeoff")
         self.timer = self.create_timer(self.timer_period, self.timer_callback)
@@ -160,10 +160,14 @@ class CircleDistortion(Node):
                 if self.has_initial_pose:
                     self.phases[1] = self.initial_phase
                     self.takeoff()
+                    self.filter.pub_phase.publish(Float32(data=self.phases[1]))
+                    self.publish_phase_differences()
 
             # Hover state
             elif self.state == 1:
-                self.hover() 
+                self.hover()
+                self.filter.pub_phase.publish(Float32(data=self.phases[1]))
+                self.publish_phase_differences()
             
             # Encirclement state
             elif self.state == 2: 
@@ -172,19 +176,14 @@ class CircleDistortion(Node):
                     omega = phase_controller(self.phases[1], self.phases[0], self.phases[2], self.omega_nominal, self.k_phi)
                     omega_msg = Float32()
                     omega_msg.data = omega
-                    self.publisher_phi_dot.publish(omega_msg)
+                    self.publish_omega.publish(omega_msg)
 
                     # Propagating the filter
                     phase, position = self.filter.predict(omega, self.timer_period)
 
                     # Updating internal parameters
                     self.phases[1] = phase
-
-                    # Checking phase differences
-                    diff_leader = wrap_to_pi(self.phases[0] - self.phases[1])
-                    diff_follower = wrap_to_pi(self.phases[2] - self.phases[1])
-                    self.publish_phase_diff_leader.publish(Float32(data=diff_leader - self.desired_phase_diff))
-                    self.publish_phase_diff_follower.publish(Float32(data=diff_follower - self.desired_phase_diff))
+                    self.publish_phase_differences()
 
                     target_r = np.array([position.pose.position.x,
                                          position.pose.position.y,
@@ -290,6 +289,13 @@ class CircleDistortion(Node):
                         self.leader = order[i-1]
                         self.follower = order[i+1]
             self.has_order = True
+
+    def publish_phase_differences(self):
+        ''' Publish phase differences to leader and follower. '''
+        diff_leader = wrap_to_pi(self.phases[0] - self.phases[1])
+        diff_follower = wrap_to_pi(self.phases[2] - self.phases[1])
+        self.publish_phase_diff_leader.publish(Float32(data=diff_leader))
+        self.publish_phase_diff_follower.publish(Float32(data=diff_follower))
 
     def takeoff(self):
         ''' Take-off procedure to reach the hover height. '''
