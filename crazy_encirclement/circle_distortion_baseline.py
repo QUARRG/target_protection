@@ -147,10 +147,17 @@ class CircleDistortion(Node):
                 if self.has_initial_pose:
                     self.phases[1] = self.initial_phase
                     self.takeoff()
+                    self.baseline.pub_phase.publish(Float32(data=self.phases[1]))
 
             # Hover state
             elif self.state == 1:
-                self.hover() 
+                self.hover()
+                self.baseline.pub_phase.publish(Float32(data=self.phases[1]))
+                    # Checking phase differences
+                diff_leader = wrap_to_pi(self.phases[0] - self.phases[1])
+                diff_follower = wrap_to_pi(self.phases[2] - self.phases[1])
+                self.publish_phase_diff_leader.publish(Float32(data=diff_leader))
+                self.publish_phase_diff_follower.publish(Float32(data=diff_follower))
             
             # Encirclement state
             elif self.state == 2: 
@@ -158,22 +165,24 @@ class CircleDistortion(Node):
                     # Propagating the system
                     current_pose = self.current_pose.copy()
                     current_pose[2] -= self.hover_height  # Remove height offset
-                    phase, position = self.baseline.predict(current_pose, self.phases, self.timer_period)
-
+                    phase, position = self.baseline.predict(current_pose, self.phases)
                     # Updating internal parameters
                     self.phases[1] = phase
                     
                     # Checking phase differences
                     diff_leader = wrap_to_pi(self.phases[0] - self.phases[1])
                     diff_follower = wrap_to_pi(self.phases[2] - self.phases[1])
-                    self.publish_phase_diff_leader.publish(Float32(data=diff_leader - self.desired_phase_diff))
-                    self.publish_phase_diff_follower.publish(Float32(data=diff_follower - self.desired_phase_diff))
+                    self.publish_phase_diff_leader.publish(Float32(data=diff_leader))
+                    self.publish_phase_diff_follower.publish(Float32(data=diff_follower))
 
                     target_r = np.array([position.pose.position.x,
                                          position.pose.position.y,
                                          position.pose.position.z + self.hover_height])
 
                     self.send_position(target_r)
+                else:
+                    self.state = 1  # Return to hover if phases are not available
+                    self.info("Lost phase information, returning to hover.")
             
             # Landing state
             elif self.state == 3:

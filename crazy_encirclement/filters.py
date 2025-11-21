@@ -258,7 +258,7 @@ class BaselineFilter(BaseFilter):
         self.pub_phase.publish(phase_msg)
     
     def predict(self, current_pose: np.ndarray, phases: list[float]):
-        curr_leader_phase, _, curr_follower_phase = phases
+        curr_leader_phase, curr_ego_phase, curr_follower_phase = phases
         Re = self.build_Re(self.embedding_fn, curr_ego_phase)
         p = Re.T.dot(current_pose)
         curr_ego_phase = np.arctan2(p[1], p[0])

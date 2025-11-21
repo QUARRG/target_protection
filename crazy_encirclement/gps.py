@@ -39,7 +39,6 @@ class GPSNode(Node):
         # self.pose = PoseStamped()
         self.pose.header.stamp = self.get_clock().now().to_msg()
         
-    
         # Add Gaussian noise to the position of the specified robot
         for pose in msg.poses:
             if pose.name == self.robot:
