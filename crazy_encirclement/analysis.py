@@ -1,0 +1,709 @@
+
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend
+import matplotlib.pyplot as plt
+import numpy as np
+from pathlib import Path
+import warnings
+from collections import defaultdict
+
+# ROS2 imports
+import rclpy
+from rclpy.serialization import deserialize_message
+from rosidl_runtime_py.utilities import get_message
+import rosbag2_py
+
+
+# Suppress the Axes3D import warning
+warnings.filterwarnings('ignore', message='Unable to import Axes3D')
+
+# Configuration
+base_dir = Path('/home/paulo/Documents/bags_filter')
+models = ['modelA_0_8', 'modelA_0_6', 'modelA_0_4', 'modelA_0_2']
+drones = ['C04', 'C05', 'C14']
+
+# Data paths - Update these with your specific rosbag directories
+data_paths = {
+    'modelA_0_2': {
+        'baseline': 'baselines/modelA/rosbag2_2025_11_20-17_44_22',
+        'filtered': 'experiments_2/modelA/rosbag2_2025_11_21-14_30_23'
+    },
+    'modelA_0_4': {
+        'baseline': 'baselines/modelA/rosbag2_2025_11_20-17_46_36',
+        'filtered': 'experiments_2/modelA/rosbag2_2025_11_21-14_32_32'
+    },
+    'modelA_0_6': {
+        'baseline': 'baselines/modelA/rosbag2_2025_11_20-17_49_09',
+        'filtered': 'experiments_2/modelA/rosbag2_2025_11_21-14_34_31'
+    },
+    'modelA_0_8': {
+        'baseline': 'baselines/modelA/rosbag2_2025_11_20-17_51_13',
+        'filtered': 'experiments_2/modelA/rosbag2_2025_11_21-14_36_15'
+    }
+}
+
+def read_bag(bag_path):
+    """Read ROS2 bag and extract relevant data."""
+    storage_options = rosbag2_py.StorageOptions(uri=str(bag_path), storage_id='sqlite3')
+    converter_options = rosbag2_py.ConverterOptions(
+        input_serialization_format='cdr',
+        output_serialization_format='cdr'
+    )
+    
+    reader = rosbag2_py.SequentialReader()
+    reader.open(storage_options, converter_options)
+    
+    topic_types = reader.get_all_topics_and_types()
+    type_map = {topic.name: topic.type for topic in topic_types}
+    
+    data = defaultdict(list)
+    
+    while reader.has_next():
+        (topic, raw_data, t) = reader.read_next()
+        
+        if topic not in type_map:
+            continue
+            
+        msg_type = get_message(type_map[topic])
+        msg = deserialize_message(raw_data, msg_type)
+        
+        # Store encircle flag
+        if topic == '/encircle':
+            data['/encircle'].append({'time': t, 'data': msg.data})
+        
+        # Store pose data for drones
+        for drone in drones:
+            # Baseline and filtered have /pose suffix
+            for source in ['baseline', 'filtered']:
+                pose_topic = f'/{drone}/{source}/pose'
+                if topic == pose_topic:
+                    data[pose_topic].append({
+                        'time': t,
+                        'stamp': msg.header.stamp.sec * 1e9 + msg.header.stamp.nanosec,
+                        'x': msg.pose.position.x,
+                        'y': msg.pose.position.y,
+                        'z': msg.pose.position.z
+                    })
+                
+                # Phase data
+                phase_topic = f'/{drone}/{source}/phase'
+                if topic == phase_topic:
+                    data[phase_topic].append({
+                        'time': t,
+                        'data': msg.data
+                    })
+                
+                # Phase difference data (leader and follower)
+                for neighbor in ['leader', 'follower']:
+                    phase_diff_topic = f'/{drone}/{source}/phase_diff/{neighbor}'
+                    if topic == phase_diff_topic:
+                        data[phase_diff_topic].append({
+                            'time': t,
+                            'data': msg.data
+                        })
+            
+            # vicon_position and gps_position don't have /pose suffix
+            for source in ['vicon_position', 'gps_position']:
+                pose_topic = f'/{drone}/{source}'
+                if topic == pose_topic:
+                    data[pose_topic].append({
+                        'time': t,
+                        'stamp': msg.header.stamp.sec * 1e9 + msg.header.stamp.nanosec,
+                        'x': msg.pose.position.x,
+                        'y': msg.pose.position.y,
+                        'z': msg.pose.position.z
+                    })
+    
+    return data
+
+
+def get_encircle_start_time(data, drone, source='baseline'):
+    """
+    Find the timestamp when /encircle becomes 1.
+    Returns the closest drone pose timestamp.
+    """
+    encircle_data = data.get('/encircle', [])
+    
+    # Determine the correct topic name based on source
+    if source in ['vicon_position', 'gps_position']:
+        pose_topic = f'/{drone}/{source}'
+    else:
+        pose_topic = f'/{drone}/{source}/pose'
+    
+    pose_data = data.get(pose_topic, [])
+    
+    if not encircle_data or not pose_data:
+        print(f"    Warning: Missing data - encircle: {len(encircle_data)}, {pose_topic}: {len(pose_data)}")
+        return None
+    
+    # Find first time encircle becomes True/1
+    encircle_start = None
+    for entry in encircle_data:
+        if entry['data']:
+            encircle_start = entry['time']
+            break
+    
+    if encircle_start is None:
+        return None
+    
+    # Find closest pose timestamp
+    min_diff = float('inf')
+    closest_stamp = None
+    for pose in pose_data:
+        diff = abs(pose['time'] - encircle_start)
+        if diff < min_diff:
+            min_diff = diff
+            closest_stamp = pose['stamp']
+    
+    return closest_stamp
+
+
+def load_data(model):
+    """Load baseline and filtered data for a given model."""
+    baseline_path = base_dir / data_paths[model]['baseline']
+    filtered_path = base_dir / data_paths[model]['filtered']
+    
+    baseline = read_bag(baseline_path)
+    filtered = read_bag(filtered_path)
+    
+    return baseline, filtered
+
+
+def get_position_data(data, drone, source='baseline', start_time=None):
+    """Extract x, y, z position data for a specific drone, optionally cropped from start_time."""
+    # Determine the correct topic name based on source
+    if source in ['vicon_position', 'gps_position']:
+        pose_topic = f'/{drone}/{source}'
+    else:
+        pose_topic = f'/{drone}/{source}/pose'
+    
+    pose_data = data.get(pose_topic, [])
+    
+    if not pose_data:
+        return {'time': np.array([]), 'x': np.array([]), 'y': np.array([]), 'z': np.array([])}
+    
+    # Filter data from start_time if provided
+    if start_time is not None:
+        pose_data = [p for p in pose_data if p['stamp'] >= start_time]
+    
+    times = np.array([p['stamp'] for p in pose_data])
+    x = np.array([p['x'] for p in pose_data])
+    y = np.array([p['y'] for p in pose_data])
+    z = np.array([p['z'] for p in pose_data])
+    
+    return {'time': times, 'x': x, 'y': y, 'z': z}
+
+
+def get_phase_data(data, drone, source='baseline', start_time=None):
+    """Extract phase data for a specific drone."""
+    phase_topic = f'/{drone}/{source}/phase'
+    phase_data = data.get(phase_topic, [])
+    
+    if not phase_data:
+        return {'time': np.array([]), 'phase': np.array([])}
+    
+    # Filter data from start_time if provided
+    if start_time is not None:
+        phase_data = [p for p in phase_data if p['time'] >= start_time]
+    
+    times = np.array([p['time'] for p in phase_data])
+    phase = np.array([p['data'] for p in phase_data])
+    
+    return {'time': times, 'phase': phase}
+
+
+def compute_phase_diff(phase1_data, phase2_data):
+    """
+    Compute phase difference between two drones by interpolating to common timestamps.
+    Returns the phase difference in degrees, wrapped to [-180, 180].
+    Includes outlier filtering using median filtering.
+    """
+    if len(phase1_data['time']) == 0 or len(phase2_data['time']) == 0:
+        return {'time': np.array([]), 'phase_diff': np.array([])}
+    
+    # Use the timestamps from phase1 as reference
+    times = phase1_data['time']
+    
+    # Interpolate phase2 to match phase1 timestamps
+    phase2_interp = np.interp(times, phase2_data['time'], phase2_data['phase'])
+    
+    # Compute phase difference (in radians)
+    phase_diff_rad = phase1_data['phase'] - phase2_interp
+    
+    # Wrap phase difference to [-pi, pi] range
+    phase_diff_rad = np.arctan2(np.sin(phase_diff_rad), np.cos(phase_diff_rad))
+    
+    # Convert to degrees (will be in [-180, 180] range)
+    phase_diff_deg = np.degrees(phase_diff_rad)
+    
+    # Apply median filter to remove outliers/spikes
+    if len(phase_diff_deg) > 5:
+        from scipy.signal import medfilt
+        # Use kernel size of 5 (must be odd)
+        phase_diff_filtered = medfilt(phase_diff_deg, kernel_size=5)
+    else:
+        phase_diff_filtered = phase_diff_deg
+    
+    # Additional outlier removal: remove points that differ too much from local median
+    if len(phase_diff_filtered) > 10:
+        window_size = 10
+        phase_diff_cleaned = phase_diff_filtered.copy()
+        
+        for i in range(len(phase_diff_filtered)):
+            # Define local window
+            start_idx = max(0, i - window_size // 2)
+            end_idx = min(len(phase_diff_filtered), i + window_size // 2 + 1)
+            local_window = phase_diff_filtered[start_idx:end_idx]
+            
+            # Compute local statistics
+            local_median = np.median(local_window)
+            local_std = np.std(local_window)
+            
+            # Replace outliers (> 3 std from median) with median
+            if abs(phase_diff_filtered[i] - local_median) > 3 * local_std:
+                phase_diff_cleaned[i] = local_median
+        
+        phase_diff_final = phase_diff_cleaned
+    else:
+        phase_diff_final = phase_diff_filtered
+    
+    return {'time': times, 'phase_diff': phase_diff_final}
+
+
+def compute_3d_rmse(baseline_data, filtered_data):
+    """
+    Compute RMSE of 3D position between filtered and baseline.
+    Interpolates to common timestamps before computing RMSE.
+    """
+    if len(baseline_data['time']) == 0 or len(filtered_data['time']) == 0:
+        return np.nan
+    
+    # Use baseline timestamps as reference
+    times = baseline_data['time']
+    
+    # Interpolate filtered data to match baseline timestamps
+    x_filtered_interp = np.interp(times, filtered_data['time'], filtered_data['x'])
+    y_filtered_interp = np.interp(times, filtered_data['time'], filtered_data['y'])
+    z_filtered_interp = np.interp(times, filtered_data['time'], filtered_data['z'])
+    
+    # Compute 3D Euclidean distance at each timestamp
+    distances = np.sqrt(
+        (baseline_data['x'] - x_filtered_interp)**2 +
+        (baseline_data['y'] - y_filtered_interp)**2 +
+        (baseline_data['z'] - z_filtered_interp)**2
+    )
+    
+    # Compute RMSE
+    rmse = np.sqrt(np.mean(distances**2))
+    
+    return rmse
+
+
+def create_montage():
+    """Create a 4x3 montage of figures showing baseline vs filtered data."""
+    # Create figure with subplots: 4 rows (models) x 3 columns (drones)
+    # Each subplot will have 3 axes stacked vertically for x, y, z
+    fig = plt.figure(figsize=(20, 24))
+    
+    # Outer grid for models (rows) and drones (columns)
+    outer_grid = fig.add_gridspec(4, 3, hspace=0.3, wspace=0.25,
+                                   left=0.08, right=0.95, top=0.95, bottom=0.05)
+    
+    for i, model in enumerate(models):
+        print(f"Processing {model}...")
+        
+        try:
+            baseline, filtered = load_data(model)
+            
+            for j, drone in enumerate(drones):
+                print(f"  Processing {drone}...")
+                
+                # Create inner grid for x, y, z plots
+                inner_grid = outer_grid[i, j].subgridspec(3, 1, hspace=0.15)
+                
+                # Get data
+                try:
+                    # Find when encircle starts for both baseline and filtered
+                    baseline_start_time = get_encircle_start_time(baseline, drone, source='vicon_position')
+                    filtered_start_time = get_encircle_start_time(filtered, drone, source='vicon_position')
+                    
+                    print(f"    Baseline encircle start: {baseline_start_time}")
+                    print(f"    Filtered encircle start: {filtered_start_time}")
+                    
+                    # Get position data cropped from encircle start
+                    baseline_data = get_position_data(baseline, drone, 'vicon_position', start_time=baseline_start_time)
+                    filtered_data = get_position_data(filtered, drone, 'vicon_position', start_time=filtered_start_time)
+                    
+                    # Compute RMSE
+                    rmse = compute_3d_rmse(baseline_data, filtered_data)
+                    print(f"    3D RMSE: {rmse:.4f} m")
+                    
+                    # Normalize time to start from 0 (aligned at encircle start)
+                    # Both datasets start from their respective encircle events and are normalized to t=0
+                    if len(baseline_data['time']) > 0:
+                        # Subtract the encircle start time to align at t=0
+                        t_base = (baseline_data['time'] - baseline_start_time) / 1e9  # Convert to seconds
+                    else:
+                        t_base = np.array([])
+                    
+                    if len(filtered_data['time']) > 0:
+                        # Subtract the encircle start time to align at t=0
+                        t_filt = (filtered_data['time'] - filtered_start_time) / 1e9  # Convert to seconds
+                    else:
+                        t_filt = np.array([])
+                    
+                    print(f"    Baseline data points: {len(t_base)}, time range: [{t_base[0] if len(t_base) > 0 else 0:.2f}, {t_base[-1] if len(t_base) > 0 else 0:.2f}]")
+                    print(f"    Filtered data points: {len(t_filt)}, time range: [{t_filt[0] if len(t_filt) > 0 else 0:.2f}, {t_filt[-1] if len(t_filt) > 0 else 0:.2f}]")
+                    
+                    # Plot x, y, z
+                    axes_labels = ['x (m)', 'y (m)', 'z (m)']
+                    data_keys = ['x', 'y', 'z']
+                    
+                    for k, (label, key) in enumerate(zip(axes_labels, data_keys)):
+                        ax = fig.add_subplot(inner_grid[k])
+                        
+                        # Plot baseline and filtered data
+                        if len(t_base) > 0:
+                            ax.plot(t_base, baseline_data[key], 'b-', label='Baseline', alpha=0.7, linewidth=1.5)
+                        if len(t_filt) > 0:
+                            ax.plot(t_filt, filtered_data[key], 'r-', label='Filtered', alpha=0.7, linewidth=1.5)
+                        
+                        ax.set_ylabel(label, fontsize=10)
+                        ax.grid(True, alpha=0.3)
+                        ax.tick_params(labelsize=9)
+                        
+                        # Set x-axis limits to 30 seconds
+                        ax.set_xlim(0, 22.5)
+                        
+                        # Add legend only to the first (top) plot
+                        if k == 0:
+                            ax.legend(loc='upper right', fontsize=9)
+                            # Add title for the first plot in each column
+                            if i == 0:
+                                ax.set_title(drone, fontsize=12, fontweight='bold')
+                        
+                        # Add x-label only to the bottom plot
+                        if k == 2:
+                            ax.set_xlabel('Time (s)', fontsize=10)
+                        else:
+                            ax.set_xticklabels([])
+                        
+                        # Add model label on the left
+                        # if j == 0 and k == 1:  # Middle row of leftmost column
+                        #     ax.text(-0.25, 0.5, f'Model {model[-1]}', 
+                        #            transform=ax.transAxes,
+                        #            fontsize=14, fontweight='bold',
+                        #            va='center', ha='center', rotation=90)
+                
+                except Exception as e:
+                    print(f"    Error processing {drone}: {e}")
+                    # Create empty subplot
+                    ax = fig.add_subplot(inner_grid[1])
+                    ax.text(0.5, 0.5, f'No data\n{drone}', 
+                           transform=ax.transAxes,
+                           ha='center', va='center', fontsize=10, color='red')
+                    ax.axis('off')
+        
+        except Exception as e:
+            print(f"  Error loading {model}: {e}")
+    
+    # Add main title
+    fig.suptitle('Baseline vs Filtered Comparison - Position Data (x, y, z)', 
+                 fontsize=16, fontweight='bold', y=0.98)
+    
+    # Save figure
+    output_path = base_dir / 'montage_results.png'
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    print(f"\nMontage saved to: {output_path}")
+    
+    # plt.show()
+
+
+def create_3d_montage():
+    """Create a 4x3 montage of 3D trajectory plots."""
+    # Create figure with subplots: 4 rows (models) x 3 columns (drones)
+    fig = plt.figure(figsize=(20, 24))
+    
+    # Outer grid for models (rows) and drones (columns)
+    outer_grid = fig.add_gridspec(4, 3, hspace=0.25, wspace=0.2,
+                                   left=0.05, right=0.95, top=0.95, bottom=0.05)
+    
+    for i, model in enumerate(models):
+        print(f"Processing {model}...")
+        
+        try:
+            baseline, filtered = load_data(model)
+            
+            for j, drone in enumerate(drones):
+                print(f"  Processing {drone}...")
+                
+                # Create 3D subplot
+                ax = fig.add_subplot(outer_grid[i, j], projection='3d')
+                
+                try:
+                    # Find when encircle starts for both baseline and filtered
+                    baseline_start_time = get_encircle_start_time(baseline, drone, source='vicon_position')
+                    filtered_start_time = get_encircle_start_time(filtered, drone, source='vicon_position')
+                    
+                    # Get position data cropped from encircle start
+                    baseline_data = get_position_data(baseline, drone, 'vicon_position', start_time=baseline_start_time)
+                    filtered_data = get_position_data(filtered, drone, 'vicon_position', start_time=filtered_start_time)
+                    
+                    # Normalize time to start from 0
+                    if len(baseline_data['time']) > 0:
+                        t_base = (baseline_data['time'] - baseline_start_time) / 1e9
+                        # Filter to 22.5 seconds
+                        mask_base = t_base <= 22.5
+                        x_base = baseline_data['x'][mask_base]
+                        y_base = baseline_data['y'][mask_base]
+                        z_base = baseline_data['z'][mask_base]
+                        t_base = t_base[mask_base]
+                    else:
+                        x_base = y_base = z_base = t_base = np.array([])
+                    
+                    if len(filtered_data['time']) > 0:
+                        t_filt = (filtered_data['time'] - filtered_start_time) / 1e9
+                        # Filter to 22.5 seconds
+                        mask_filt = t_filt <= 22.5
+                        x_filt = filtered_data['x'][mask_filt]
+                        y_filt = filtered_data['y'][mask_filt]
+                        z_filt = filtered_data['z'][mask_filt]
+                        t_filt = t_filt[mask_filt]
+                    else:
+                        x_filt = y_filt = z_filt = t_filt = np.array([])
+                    
+                    # Plot 3D trajectories
+                    if len(x_base) > 0:
+                        ax.plot(x_base, y_base, z_base, 'b-', label='Baseline', alpha=0.7, linewidth=2)
+                        # Mark start point
+                        ax.scatter(x_base[0], y_base[0], z_base[0], c='blue', marker='o', s=100, alpha=0.8)
+                    
+                    if len(x_filt) > 0:
+                        ax.plot(x_filt, y_filt, z_filt, 'r-', label='Filtered', alpha=0.7, linewidth=2)
+                        # Mark start point
+                        ax.scatter(x_filt[0], y_filt[0], z_filt[0], c='red', marker='o', s=100, alpha=0.8)
+                    
+                    # Set labels
+                    ax.set_xlabel('X (m)', fontsize=10)
+                    ax.set_ylabel('Y (m)', fontsize=10)
+                    ax.set_zlabel('Z (m)', fontsize=10)
+                    
+                    # Set title for top row
+                    if i == 0:
+                        ax.set_title(drone, fontsize=12, fontweight='bold')
+                    
+                    # Add legend
+                    ax.legend(loc='upper right', fontsize=9)
+                    
+                    # Set viewing angle
+                    ax.view_init(elev=20, azim=45)
+                    
+                    # Set equal aspect ratio for better visualization
+                    if len(x_base) > 0 or len(x_filt) > 0:
+                        all_x = np.concatenate([x_base, x_filt]) if len(x_base) > 0 and len(x_filt) > 0 else (x_base if len(x_base) > 0 else x_filt)
+                        all_y = np.concatenate([y_base, y_filt]) if len(y_base) > 0 and len(y_filt) > 0 else (y_base if len(y_base) > 0 else y_filt)
+                        all_z = np.concatenate([z_base, z_filt]) if len(z_base) > 0 and len(z_filt) > 0 else (z_base if len(z_base) > 0 else z_filt)
+                        
+                        max_range = np.array([all_x.max()-all_x.min(), 
+                                             all_y.max()-all_y.min(), 
+                                             all_z.max()-all_z.min()]).max() / 2.0
+                        
+                        mid_x = (all_x.max()+all_x.min()) * 0.5
+                        mid_y = (all_y.max()+all_y.min()) * 0.5
+                        mid_z = (all_z.max()+all_z.min()) * 0.5
+                        
+                        ax.set_xlim(mid_x - max_range, mid_x + max_range)
+                        ax.set_ylim(mid_y - max_range, mid_y + max_range)
+                        ax.set_zlim(mid_z - max_range, mid_z + max_range)
+                    
+                    # Add model label on the left side
+                    # if j == 0:
+                    #     ax.text2D(-0.15, 0.5, f'σ = {model.split("_")[-1]}', 
+                    #              transform=ax.transAxes,
+                    #              fontsize=14, fontweight='bold',
+                    #              va='center', ha='center', rotation=90)
+                    
+                    print(f"    3D plot created with {len(x_base)} baseline and {len(x_filt)} filtered points")
+                
+                except Exception as e:
+                    print(f"    Error processing {drone}: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    ax.text2D(0.5, 0.5, f'No data\n{drone}', 
+                             transform=ax.transAxes,
+                             ha='center', va='center', fontsize=10, color='red')
+        
+        except Exception as e:
+            print(f"  Error loading {model}: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    # Add main title
+    fig.suptitle('3D Trajectory Comparison - Baseline vs Filtered', 
+                 fontsize=16, fontweight='bold', y=0.98)
+    
+    # Save figure
+    output_path = base_dir / 'montage_3d_results.png'
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    print(f"\n3D Montage saved to: {output_path}")
+    
+    plt.close()
+
+
+def create_phase_montage():
+    """Create a 4x3 montage of phase difference plots."""
+    # Create figure with subplots: 4 rows (models) x 3 columns (drones)
+    # Each subplot will have 2 axes stacked vertically for leader and follower phase diff
+    fig = plt.figure(figsize=(20, 24))
+    
+    # Outer grid for models (rows) and drones (columns)
+    outer_grid = fig.add_gridspec(4, 3, hspace=0.3, wspace=0.25,
+                                   left=0.08, right=0.95, top=0.95, bottom=0.05)
+    
+    for i, model in enumerate(models):
+        print(f"Processing {model}...")
+        
+        try:
+            baseline, filtered = load_data(model)
+            
+            for j, drone in enumerate(drones):
+                print(f"  Processing {drone}...")
+                
+                # Create inner grid for leader and follower phase diff plots
+                inner_grid = outer_grid[i, j].subgridspec(2, 1, hspace=0.15)
+                
+                # Get data
+                try:
+                    # Find when encircle starts for both baseline and filtered
+                    baseline_start_time = get_encircle_start_time(baseline, drone, source='baseline')
+                    filtered_start_time = get_encircle_start_time(filtered, drone, source='filtered')
+                    
+                    # Define neighbor relationships
+                    # C04: follower=C05, leader=C14
+                    # C05: follower=C14, leader=C04
+                    # C14: follower=C04, leader=C05
+                    neighbor_map = {
+                        'C04': {'leader': 'C14', 'follower': 'C05'},
+                        'C05': {'leader': 'C04', 'follower': 'C14'},
+                        'C14': {'leader': 'C05', 'follower': 'C04'}
+                    }
+                    
+                    # Plot for leader and follower
+                    neighbors = ['leader', 'follower']
+                    
+                    for k, neighbor in enumerate(neighbors):
+                        ax = fig.add_subplot(inner_grid[k])
+                        
+                        # Get the actual drone name for this relationship
+                        neighbor_drone = neighbor_map[drone][neighbor]
+                        label = f'Phase Diff to {neighbor.capitalize()} ({neighbor_drone})'
+                        
+                        # Get individual phase data for ego drone and neighbor drone
+                        # Baseline
+                        ego_phase_base = get_phase_data(baseline, drone, 'baseline', start_time=baseline_start_time)
+                        neighbor_phase_base = get_phase_data(baseline, neighbor_drone, 'baseline', start_time=baseline_start_time)
+                        baseline_phase = compute_phase_diff(ego_phase_base, neighbor_phase_base)
+                        
+                        # Filtered
+                        ego_phase_filt = get_phase_data(filtered, drone, 'filtered', start_time=filtered_start_time)
+                        neighbor_phase_filt = get_phase_data(filtered, neighbor_drone, 'filtered', start_time=filtered_start_time)
+                        filtered_phase = compute_phase_diff(ego_phase_filt, neighbor_phase_filt)
+                        
+                        # Normalize time to start from 0
+                        if len(baseline_phase['time']) > 0:
+                            t_base = (baseline_phase['time'] - baseline_start_time) / 1e9
+                        else:
+                            t_base = np.array([])
+                        
+                        if len(filtered_phase['time']) > 0:
+                            t_filt = (filtered_phase['time'] - filtered_start_time) / 1e9
+                        else:
+                            t_filt = np.array([])
+                        
+                        # Plot phase difference data
+                        if len(t_base) > 0:
+                            ax.plot(t_base, baseline_phase['phase_diff'], 'b-', 
+                                   label='Baseline', alpha=0.7, linewidth=1.5)
+                        if len(t_filt) > 0:
+                            ax.plot(t_filt, filtered_phase['phase_diff'], 'r-', 
+                                   label='Filtered', alpha=0.7, linewidth=1.5)
+                        
+                        # Add theoretical value lines
+                        # Leader is ahead: ego - leader = -120°
+                        # Follower is behind: ego - follower = +120°
+                        if neighbor == 'leader':
+                            ax.axhline(y=-120, color='g', linestyle='--', linewidth=2, 
+                                      label='Theoretical (-120°)', alpha=0.7)
+                        else:  # follower
+                            ax.axhline(y=120, color='g', linestyle='--', linewidth=2, 
+                                      label='Theoretical (+120°)', alpha=0.7)
+                        
+                        ax.set_ylabel('Phase Diff (deg)', fontsize=10)
+                        ax.grid(True, alpha=0.3)
+                        ax.tick_params(labelsize=9)
+                        
+                        # Set x-axis limits
+                        ax.set_xlim(0, 22.5)
+                        
+                        # Set y-axis limits to show the full range [-180, 180]
+                        ax.set_ylim(-180, 180)
+                        
+                        # Add legend only to the first (top) plot
+                        if k == 0:
+                            ax.legend(loc='upper right', fontsize=9)
+                            # Add title for the first plot in each column
+                            if i == 0:
+                                ax.set_title(drone, fontsize=12, fontweight='bold')
+                        
+                        # Add subplot label showing which drone is the neighbor
+                        ax.text(0.02, 0.95, label, transform=ax.transAxes,
+                               fontsize=9, va='top', ha='left',
+                               bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+                        
+                        # Add x-label only to the bottom plot
+                        if k == 1:
+                            ax.set_xlabel('Time (s)', fontsize=10)
+                        else:
+                            ax.set_xticklabels([])
+                        
+                        # Add model label on the left
+                        if j == 0 and k == 0:  # Top row of leftmost column
+                            omega_value = model.split('_')[-1].replace('_', '.')
+                            ax.text(-0.25, 0.5, f'ω = {omega_value}', 
+                                   transform=ax.transAxes,
+                                   fontsize=14, fontweight='bold',
+                                   va='center', ha='center', rotation=90)
+                
+                except Exception as e:
+                    print(f"    Error processing {drone}: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    # Create empty subplot
+                    ax = fig.add_subplot(inner_grid[0])
+                    ax.text(0.5, 0.5, f'No data\n{drone}', 
+                           transform=ax.transAxes,
+                           ha='center', va='center', fontsize=10, color='red')
+                    ax.axis('off')
+        
+        except Exception as e:
+            print(f"  Error loading {model}: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    # Add main title
+    fig.suptitle('Phase Difference Comparison - Baseline vs Filtered (Theoretical: 120°)', 
+                 fontsize=16, fontweight='bold', y=0.98)
+    
+    # Save figure
+    output_path = base_dir / 'montage_phase_results.png'
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    print(f"\nPhase Montage saved to: {output_path}")
+    
+    plt.close()
+
+
+if __name__ == '__main__':
+    create_montage()
+    create_3d_montage()
+    create_phase_montage()
+
