@@ -46,6 +46,7 @@ class CircleDistortion(Node):
         self.declare_parameter('V', [0.1, 0.1, 0.1])
         self.declare_parameter('predict_hz', 50.0)
         self.declare_parameter('update_hz', 10.0)
+        self.declare_parameter('seed', 42)
 
          # Get filter parameters
         P_list = self.get_parameter('P').value
@@ -53,6 +54,10 @@ class CircleDistortion(Node):
         V_list = self.get_parameter('V').value
         self.predict_hz = self.get_parameter('predict_hz').value
         self.update_hz  = self.get_parameter('update_hz').value
+
+        # Set random seed
+        seed = self.get_parameter('seed').value
+        np.random.seed(seed)
 
         # Reboot client
         self.reboot_client = self.create_client(Empty, self.robot + '/reboot')
@@ -123,7 +128,8 @@ class CircleDistortion(Node):
             'P': P_list,
             'Q': Q_list,
             'V': V_list,
-            'radius_guess': self.radius_nominal + np.random.normal(0, 0.15),
+            'radius_nominal': self.radius_nominal,
+            'radius_guess': self.initial_radius + np.random.normal(0, 0.15),
             'phase_guess': self.initial_phase + np.random.normal(0, 0.1),
             'frame_id': self.frame_id
         }
@@ -182,13 +188,12 @@ class CircleDistortion(Node):
                     phase, position = self.filter.predict(omega, self.timer_period)
 
                     # Updating internal parameters
-                    self.phases[1] = phase
+                    self.phases[1] = phase.data
                     self.publish_phase_differences()
 
                     target_r = np.array([position.pose.position.x,
                                          position.pose.position.y,
                                          position.pose.position.z + self.hover_height])
-
                     self.send_position(target_r)
             
             # Landing state
@@ -216,9 +221,7 @@ class CircleDistortion(Node):
         phase, position = self.filter.update(y)
 
         # Updating internal parameters
-        self.phases[1] = phase
-
-        # Checking phase differences
+        self.phases[1] = phase.data
         self.publish_phase_differences()
 
         target_r = np.array([position.pose.position.x,
@@ -237,6 +240,7 @@ class CircleDistortion(Node):
             self.initial_pose[1] = robot_pose.pose.position.y
             self.initial_pose[2] = robot_pose.pose.position.z   
             self.initial_phase = wrap_to_pi(np.arctan2(self.initial_pose[1], self.initial_pose[0]))   
+            self.initial_radius = np.sqrt(self.initial_pose[0]**2 + self.initial_pose[1]**2)
             self.takeoff_traj(4)
             self.has_initial_pose = True    
             

@@ -118,7 +118,8 @@ class CircleDistortion(Node):
             'k_phi': self.k_phi,
             'embedding_fn_name': self.embedding_fn_name,
             'omega_nominal': self.omega_nominal,
-            'radius_guess': self.radius_nominal,
+            'radius_nominal': self.radius_nominal,
+            'radius_guess': self.initial_radius,
             'phase_guess': self.initial_phase,
             'frame_id': self.frame_id,
             'dt': self.timer_period
@@ -164,14 +165,15 @@ class CircleDistortion(Node):
                     current_pose[2] -= self.hover_height  # Remove height offset
                     phase, position = self.baseline.predict(current_pose, self.phases)
                     # Updating internal parameters
-                    self.phases[1] = phase
+                    self.phases[1] = phase.data
                     self.publish_phase_differences()
 
+                    # Sending position command
                     target_r = np.array([position.pose.position.x,
                                          position.pose.position.y,
                                          position.pose.position.z + self.hover_height])
-
                     self.send_position(target_r)
+
                 else:
                     self.state = 1  # Return to hover if phases are not available
                     self.info("Lost phase information, returning to hover.")
@@ -201,7 +203,8 @@ class CircleDistortion(Node):
             self.initial_pose[0] = robot_pose.pose.position.x
             self.initial_pose[1] = robot_pose.pose.position.y
             self.initial_pose[2] = robot_pose.pose.position.z   
-            self.initial_phase = wrap_to_pi(np.arctan2(self.initial_pose[1], self.initial_pose[0]))   
+            self.initial_phase = wrap_to_pi(np.arctan2(self.initial_pose[1], self.initial_pose[0]))
+            self.initial_radius = np.sqrt(self.initial_pose[0]**2 + self.initial_pose[1]**2)
             self.takeoff_traj(4)
             self.has_initial_pose = True    
             

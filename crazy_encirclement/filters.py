@@ -100,11 +100,12 @@ class BaseFilter:
         self.node: Node = node
 
         # Initialize filter parameters 
-        self.P: np.ndarray = np.diag(np.square(self.params.get('P', np.zeros(4))))
-        self.Q: np.ndarray = np.diag(np.square(self.params.get('Q', np.zeros(4))))
-        self.V: np.ndarray = np.diag(np.square(self.params.get('V', np.zeros(3))))
+        self.P: np.ndarray  = np.diag(np.square(self.params.get('P', np.zeros(4))))
+        self.Q: np.ndarray  = np.diag(np.square(self.params.get('Q', np.zeros(4))))
+        self.V: np.ndarray  = np.diag(np.square(self.params.get('V', np.zeros(3))))
         self.Rc: np.ndarray = self.build_Rc(wrap_to_pi(self.params.get('phase_guess', 0.0)))
-        self.radius: float = self.params.get('radius_guess', 2.0)
+        self.radius: float  = self.params.get('radius_guess', 2.0)
+        self.radius_nominal: float = self.params.get('radius_nominal', 2.0)
         self.s: float = np.log(self.radius)
         self.e_x: np.ndarray = np.asarray([[1.], [0.], [0.]])
 
@@ -115,14 +116,10 @@ class BaseFilter:
 
         # Publishers
         self.frame_id: str = self.params.get('frame_id', 'world')
-        self.pub_pose  = self.node.create_publisher(PoseStamped, f'/{self.name}/filtered/pose', 10)
-        self.pub_phase = self.node.create_publisher(Float32, f'/{self.name}/filtered/phase', 10)
+        self.pub_pose: Node.Publisher   = self.node.create_publisher(PoseStamped, f'/{self.name}/filtered/pose', 10)
+        self.pub_phase: Node.Publisher  = self.node.create_publisher(Float32, f'/{self.name}/filtered/phase', 10)
+        self.pub_radius: Node.Publisher = self.node.create_publisher(Float32, f'/{self.name}/filtered/radius', 10)
         self.node.info(f'Filter for agent {self.name} initialized with embedding function {embedding_fn_name}.')
-
-        # Initialize by publishing initial pose and phase
-        pose_msg, phase_msg = self.build_pose_phase_msgs()
-        self.pub_pose.publish(pose_msg)
-        self.pub_phase.publish(phase_msg)
 
     def build_Rc(self, phase: float) -> np.ndarray:
         # wrap phase to [-pi, pi]
@@ -138,20 +135,32 @@ class BaseFilter:
     def get_phase(self, Rc: np.ndarray) -> float:
         return wrap_to_pi(np.arctan2(Rc[1,0], Rc[0,0]))
 
-    def build_pose_phase_msgs(self) -> list[PoseStamped, Float32]:
-        pose_msg = PoseStamped()
-        pose_msg.header.frame_id = self.frame_id
-        pose_msg.header.stamp = self.node.get_clock().now().to_msg()
+    def build_pose_phase_msgs(self) -> list[PoseStamped, PoseStamped, Float32, Float32]:
+        # Build PoseStamped and Float32 messages for current pose, phase and radius
+        current_pose_msg = PoseStamped()
+        current_pose_msg.header.frame_id = self.frame_id
+        current_pose_msg.header.stamp = self.node.get_clock().now().to_msg()
         phase: float = self.get_phase(self.Rc)
         Re: np.ndarray = self.build_Re(self.embedding_fn, phase)
         Rc: np.ndarray = self.build_Rc(phase)
         radius: float = np.exp(self.s)
         q: np.ndarray = (Re @ Rc @ (self.e_x * radius)).flatten()
-        pose_msg.pose.position = Point(x=q[0], y=q[1], z=q[2])
-        pose_msg.pose.orientation = Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+        current_pose_msg.pose.position = Point(x=q[0], y=q[1], z=q[2])
+        current_pose_msg.pose.orientation = Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
         phase_msg = Float32()
         phase_msg.data = phase
-        return pose_msg, phase_msg
+        radius_msg = Float32()
+        radius_msg.data = radius
+
+        # Building desired pose message with nominal radius
+        desired_pose_msg = PoseStamped()
+        desired_pose_msg.header.frame_id = self.frame_id
+        desired_pose_msg.header.stamp = self.node.get_clock().now().to_msg()
+        q_desired: np.ndarray = (Re @ Rc @ (self.e_x * self.radius_nominal)).flatten()
+        desired_pose_msg.pose.position = Point(x=q_desired[0], y=q_desired[1], z=q_desired[2])
+        desired_pose_msg.pose.orientation = Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+
+        return current_pose_msg, desired_pose_msg, phase_msg, radius_msg
     
     def predict(self, omega_z: float, dt: float):
         # Update theta based on omega_z and time step
@@ -168,12 +177,13 @@ class BaseFilter:
         self.P = (self.P + self.P.T) / 2  # Ensure symmetry
 
         # Publish predicted pose and phase
-        pose_msg, phase_msg = self.build_pose_phase_msgs()
-        self.pub_pose.publish(pose_msg)
+        current_pose_msg, desired_pose_msg, phase_msg, radius_msg = self.build_pose_phase_msgs()
+        self.pub_pose.publish(current_pose_msg)
         self.pub_phase.publish(phase_msg)
+        self.pub_radius.publish(radius_msg)
         # self.node.get_logger().info(f'Published pose for agent {self.name}')
 
-        return phase_msg.data, pose_msg
+        return phase_msg, desired_pose_msg
 
 
 class FilterGPS(BaseFilter):
@@ -215,12 +225,12 @@ class FilterGPS(BaseFilter):
         self.P = 0.5 * np.add(self.P, self.P.T)   
 
         # Publish updated pose and phase
-        pose_msg, phase_msg = self.build_pose_phase_msgs()
-        self.pub_pose.publish(pose_msg)
+        current_pose_msg, desired_pose_msg, phase_msg, radius_msg = self.build_pose_phase_msgs()
+        self.pub_pose.publish(current_pose_msg)
         self.pub_phase.publish(phase_msg)
+        self.pub_radius.publish(radius_msg)
 
-        return phase_msg.data, pose_msg
-
+        return phase_msg, desired_pose_msg
 
 class BaselineFilter(BaseFilter):
     ''' Baseline filter without state estimation for encirclement tasks.
@@ -241,40 +251,42 @@ class BaselineFilter(BaseFilter):
         self.omega_nominal: float = self.params.get('omega_nominal', 0.5)
         self.frame_id: str = self.params.get('frame_id', 'world')
         self.radius: float = self.params.get('radius_guess', 2.0)
+        self.radius_nominal: float = self.params.get('radius_nominal', 2.0)
+
         self.s: float = np.log(self.radius)
         self.Rc: np.ndarray = self.build_Rc(wrap_to_pi(self.params.get('phase_guess', 0.0)))
         self.dt : float = self.params.get('dt', 0.1)
         self.e_x: np.ndarray = np.asarray([[1.], [0.], [0.]])
 
         # Publishers
-        self.pub_omega = self.node.create_publisher(Float32, f'/{self.name}/baseline/omega', 10)
-        self.pub_pose  = self.node.create_publisher(PoseStamped, f'/{self.name}/baseline/pose', 10)
-        self.pub_phase = self.node.create_publisher(Float32, f'/{self.name}/baseline/phase', 10)
+        self.pub_omega  = self.node.create_publisher(Float32, f'/{self.name}/baseline/omega', 10)
+        self.pub_pose   = self.node.create_publisher(PoseStamped, f'/{self.name}/baseline/pose', 10)
+        self.pub_phase  = self.node.create_publisher(Float32, f'/{self.name}/baseline/phase', 10)
+        self.pub_radius = self.node.create_publisher(Float32, f'/{self.name}/baseline/radius', 10)
         self.node.info(f'Baseline filter for agent {self.name} initialized.')
-
-        # Initialize by publishing initial pose and phase
-        pose_msg, phase_msg = self.build_pose_phase_msgs()
-        self.pub_pose.publish(pose_msg)
-        self.pub_phase.publish(phase_msg)
     
     def predict(self, current_pose: np.ndarray, phases: list[float]):
-        curr_leader_phase, curr_ego_phase, curr_follower_phase = phases
-        Re = self.build_Re(self.embedding_fn, curr_ego_phase)
+        prev_leader_phase, prev_ego_phase, prev_follower_phase = phases
+        Re = self.build_Re(self.embedding_fn, prev_ego_phase)
         p = Re.T.dot(current_pose)
         curr_ego_phase = np.arctan2(p[1], p[0])
-        omega = phase_controller(curr_ego_phase, curr_leader_phase, curr_follower_phase, self.omega_nominal, self.k_phi)
+        curr_ego_radius = np.sqrt(p[0]**2 + p[1]**2)
+        self.s = np.log(curr_ego_radius)
+        self.radius = curr_ego_radius
+        omega = phase_controller(curr_ego_phase, prev_leader_phase, prev_follower_phase, self.omega_nominal, self.k_phi)
         # Update phase
         self.Rc = exp_SO3(np.asarray([0., 0., omega * self.dt])) @ self.Rc
         self.Rc = orthonormalize(self.Rc)
         
         # Publish predicted pose and phase
-        pose_msg, phase_msg = self.build_pose_phase_msgs()
-        self.pub_pose.publish(pose_msg)
+        current_pose_msg, desired_pose_msg, phase_msg, radius_msg = self.build_pose_phase_msgs()
+        self.pub_pose.publish(current_pose_msg)
         self.pub_phase.publish(phase_msg)
+        self.pub_radius.publish(radius_msg)
 
         omega_msg = Float32()
         omega_msg.data = omega
         self.pub_omega.publish(omega_msg)
 
-        return phase_msg.data, pose_msg
+        return phase_msg, desired_pose_msg
 # ----------------------------------------------------------------------
