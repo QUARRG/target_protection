@@ -8,9 +8,9 @@ circle_distortion_filters:
     predict_hz: 10.0
     update_hz: 10.0
     # Parameters for circle distortion
-    embedding_fn_name: modelC
+    embedding_fn_name: modelD
     frame_id: world
-    hover_height: 1.0  # meters
+    hover_height: 0.9  # meters
     radius_nominal: 1.0  # meters
-    omega_nominal: 0.6   # radians per second
+    omega_nominal: 0.2   # radians per second
     k_phi: 0.1

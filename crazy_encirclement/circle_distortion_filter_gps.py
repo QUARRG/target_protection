@@ -219,10 +219,7 @@ class CircleDistortion(Node):
         self.phases[1] = phase
 
         # Checking phase differences
-        diff_leader = wrap_to_pi(self.phases[0] - self.phases[1])
-        diff_follower = wrap_to_pi(self.phases[2] - self.phases[1])
-        self.publish_phase_diff_leader.publish(Float32(data=diff_leader - self.desired_phase_diff))
-        self.publish_phase_diff_follower.publish(Float32(data=diff_follower - self.desired_phase_diff))
+        self.publish_phase_differences()
 
         target_r = np.array([position.pose.position.x,
                              position.pose.position.y,
