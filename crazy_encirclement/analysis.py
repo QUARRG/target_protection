@@ -26,21 +26,22 @@ drones = ['C04', 'C05', 'C14']
 data_paths = {
     'modelA_0_2': {
         'baseline': 'baselines/modelA/rosbag2_2025_11_20-17_44_22',
-        'filtered': 'experiments_2/modelA/rosbag2_2025_11_21-14_30_23'
+        'filtered': 'experiments_gps/modelA/rosbag2_2025_11_25-15_44_48'
     },
     'modelA_0_4': {
         'baseline': 'baselines/modelA/rosbag2_2025_11_20-17_46_36',
-        'filtered': 'experiments_2/modelA/rosbag2_2025_11_21-14_32_32'
+        'filtered': 'experiments_gps/modelA/rosbag2_2025_11_25-15_38_20'
     },
     'modelA_0_6': {
         'baseline': 'baselines/modelA/rosbag2_2025_11_20-17_49_09',
-        'filtered': 'experiments_2/modelA/rosbag2_2025_11_21-14_34_31'
+        'filtered': 'experiments_gps/modelA/rosbag2_2025_11_25-15_34_11'
     },
     'modelA_0_8': {
         'baseline': 'baselines/modelA/rosbag2_2025_11_20-17_51_13',
-        'filtered': 'experiments_2/modelA/rosbag2_2025_11_21-14_36_15'
+        'filtered': 'experiments_gps/modelA/rosbag2_2025_11_25-15_32_20'
     }
 }
+
 
 def read_bag(bag_path):
     """Read ROS2 bag and extract relevant data."""
@@ -169,7 +170,7 @@ def load_data(model):
     return baseline, filtered
 
 
-def get_position_data(data, drone, source='baseline', start_time=None):
+def get_position_data(data, drone, source='baseline', start_time=None, duration=40.0):
     """Extract x, y, z position data for a specific drone, optionally cropped from start_time."""
     # Determine the correct topic name based on source
     if source in ['vicon_position', 'gps_position']:
@@ -184,7 +185,9 @@ def get_position_data(data, drone, source='baseline', start_time=None):
     
     # Filter data from start_time if provided
     if start_time is not None:
-        pose_data = [p for p in pose_data if p['stamp'] >= start_time]
+        # Crop to duration (in seconds) after start_time
+        end_time = start_time + duration * 1e9  # Convert duration to nanoseconds
+        pose_data = [p for p in pose_data if start_time <= p['stamp'] <= end_time]
     
     times = np.array([p['stamp'] for p in pose_data])
     x = np.array([p['x'] for p in pose_data])
@@ -194,7 +197,7 @@ def get_position_data(data, drone, source='baseline', start_time=None):
     return {'time': times, 'x': x, 'y': y, 'z': z}
 
 
-def get_phase_data(data, drone, source='baseline', start_time=None):
+def get_phase_data(data, drone, source='baseline', start_time=None, duration=40.0):
     """Extract phase data for a specific drone."""
     phase_topic = f'/{drone}/{source}/phase'
     phase_data = data.get(phase_topic, [])
@@ -204,7 +207,9 @@ def get_phase_data(data, drone, source='baseline', start_time=None):
     
     # Filter data from start_time if provided
     if start_time is not None:
-        phase_data = [p for p in phase_data if p['time'] >= start_time]
+        # Crop to duration (in seconds) after start_time
+        end_time = start_time + duration * 1e9  # Convert duration to nanoseconds
+        phase_data = [p for p in phase_data if start_time <= p['time'] <= end_time]
     
     times = np.array([p['time'] for p in phase_data])
     phase = np.array([p['data'] for p in phase_data])
@@ -234,7 +239,7 @@ def compute_phase_diff(phase1_data, phase2_data):
     phase_diff_rad = np.arctan2(np.sin(phase_diff_rad), np.cos(phase_diff_rad))
     
     # Convert to degrees (will be in [-180, 180] range)
-    phase_diff_deg = np.degrees(phase_diff_rad)
+    phase_diff_deg = np.degrees(np.abs(phase_diff_rad))
     
     # Apply median filter to remove outliers/spikes
     if len(phase_diff_deg) > 5:
@@ -372,9 +377,6 @@ def create_montage():
                         ax.grid(True, alpha=0.3)
                         ax.tick_params(labelsize=9)
                         
-                        # Set x-axis limits to 30 seconds
-                        ax.set_xlim(0, 22.5)
-                        
                         # Add legend only to the first (top) plot
                         if k == 0:
                             ax.legend(loc='upper right', fontsize=9)
@@ -389,11 +391,12 @@ def create_montage():
                             ax.set_xticklabels([])
                         
                         # Add model label on the left
-                        # if j == 0 and k == 1:  # Middle row of leftmost column
-                        #     ax.text(-0.25, 0.5, f'Model {model[-1]}', 
-                        #            transform=ax.transAxes,
-                        #            fontsize=14, fontweight='bold',
-                        #            va='center', ha='center', rotation=90)
+                        if j == 0 and k == 1:  # Middle row of leftmost column
+                            omega_value = model.split('_')[-1].replace('_', '.')
+                            ax.text(-0.25, 0.5, f'ω = 0.{omega_value}', 
+                                   transform=ax.transAxes,
+                                   fontsize=14, fontweight='bold',
+                                   va='center', ha='center', rotation=90)
                 
                 except Exception as e:
                     print(f"    Error processing {drone}: {e}")
@@ -410,6 +413,9 @@ def create_montage():
     # Add main title
     fig.suptitle('Baseline vs Filtered Comparison - Position Data (x, y, z)', 
                  fontsize=16, fontweight='bold', y=0.98)
+    
+    # Apply tight layout
+    # plt.tight_layout(rect=[0, 0, 1, 0.97])
     
     # Save figure
     output_path = base_dir / 'montage_results.png'
@@ -452,36 +458,70 @@ def create_3d_montage():
                     # Normalize time to start from 0
                     if len(baseline_data['time']) > 0:
                         t_base = (baseline_data['time'] - baseline_start_time) / 1e9
-                        # Filter to 22.5 seconds
-                        mask_base = t_base <= 22.5
-                        x_base = baseline_data['x'][mask_base]
-                        y_base = baseline_data['y'][mask_base]
-                        z_base = baseline_data['z'][mask_base]
-                        t_base = t_base[mask_base]
+                        x_base = baseline_data['x']
+                        y_base = baseline_data['y']
+                        z_base = baseline_data['z']
                     else:
                         x_base = y_base = z_base = t_base = np.array([])
                     
                     if len(filtered_data['time']) > 0:
                         t_filt = (filtered_data['time'] - filtered_start_time) / 1e9
-                        # Filter to 22.5 seconds
-                        mask_filt = t_filt <= 22.5
-                        x_filt = filtered_data['x'][mask_filt]
-                        y_filt = filtered_data['y'][mask_filt]
-                        z_filt = filtered_data['z'][mask_filt]
-                        t_filt = t_filt[mask_filt]
+                        x_filt = filtered_data['x']
+                        y_filt = filtered_data['y']
+                        z_filt = filtered_data['z']
                     else:
                         x_filt = y_filt = z_filt = t_filt = np.array([])
                     
-                    # Plot 3D trajectories
-                    if len(x_base) > 0:
-                        ax.plot(x_base, y_base, z_base, 'b-', label='Baseline', alpha=0.7, linewidth=2)
-                        # Mark start point
-                        ax.scatter(x_base[0], y_base[0], z_base[0], c='blue', marker='o', s=100, alpha=0.8)
+                    # Create common time reference by interpolating both to a unified time grid
+                    # This ensures both trajectories grow at the same rate
+                    if len(t_base) > 0 and len(t_filt) > 0:
+                        # Use the longer time series as reference
+                        if len(t_base) >= len(t_filt):
+                            t_common = t_base
+                            x_base_interp = x_base
+                            y_base_interp = y_base
+                            z_base_interp = z_base
+                            x_filt_interp = np.interp(t_common, t_filt, x_filt)
+                            y_filt_interp = np.interp(t_common, t_filt, y_filt)
+                            z_filt_interp = np.interp(t_common, t_filt, z_filt)
+                        else:
+                            t_common = t_filt
+                            x_filt_interp = x_filt
+                            y_filt_interp = y_filt
+                            z_filt_interp = z_filt
+                            x_base_interp = np.interp(t_common, t_base, x_base)
+                            y_base_interp = np.interp(t_common, t_base, y_base)
+                            z_base_interp = np.interp(t_common, t_base, z_base)
+                        
+                        # Add progressive z-offset to create spiral effect (0.05m per second)
+                        z_base_spiral = z_base_interp + t_common * 0.1
+                        z_filt_spiral = z_filt_interp + t_common * 0.1
+                    elif len(t_base) > 0:
+                        t_common = t_base
+                        x_base_interp = x_base
+                        y_base_interp = y_base
+                        z_base_spiral = z_base + t_common * 0.1
+                        x_filt_interp = y_filt_interp = z_filt_spiral = np.array([])
+                    elif len(t_filt) > 0:
+                        t_common = t_filt
+                        x_filt_interp = x_filt
+                        y_filt_interp = y_filt
+                        z_filt_spiral = z_filt + t_common * 0.1
+                        x_base_interp = y_base_interp = z_base_spiral = np.array([])
+                    else:
+                        x_base_interp = y_base_interp = z_base_spiral = np.array([])
+                        x_filt_interp = y_filt_interp = z_filt_spiral = np.array([])
                     
-                    if len(x_filt) > 0:
-                        ax.plot(x_filt, y_filt, z_filt, 'r-', label='Filtered', alpha=0.7, linewidth=2)
+                    # Plot 3D trajectories with spiral effect
+                    if len(x_base_interp) > 0:
+                        ax.plot(x_base_interp, y_base_interp, z_base_spiral, 'b-', label='Baseline', alpha=0.7, linewidth=2)
                         # Mark start point
-                        ax.scatter(x_filt[0], y_filt[0], z_filt[0], c='red', marker='o', s=100, alpha=0.8)
+                        ax.scatter(x_base_interp[0], y_base_interp[0], z_base_spiral[0], c='blue', marker='o', s=100, alpha=0.8)
+                    
+                    if len(x_filt_interp) > 0:
+                        ax.plot(x_filt_interp, y_filt_interp, z_filt_spiral, 'r-', label='Filtered', alpha=0.7, linewidth=2)
+                        # Mark start point
+                        ax.scatter(x_filt_interp[0], y_filt_interp[0], z_filt_spiral[0], c='red', marker='o', s=100, alpha=0.8)
                     
                     # Set labels
                     ax.set_xlabel('X (m)', fontsize=10)
@@ -495,14 +535,15 @@ def create_3d_montage():
                     # Add legend
                     ax.legend(loc='upper right', fontsize=9)
                     
-                    # Set viewing angle
+                    # Set viewing angle and orthographic projection
                     ax.view_init(elev=20, azim=45)
+                    ax.set_proj_type('ortho')
                     
                     # Set equal aspect ratio for better visualization
-                    if len(x_base) > 0 or len(x_filt) > 0:
-                        all_x = np.concatenate([x_base, x_filt]) if len(x_base) > 0 and len(x_filt) > 0 else (x_base if len(x_base) > 0 else x_filt)
-                        all_y = np.concatenate([y_base, y_filt]) if len(y_base) > 0 and len(y_filt) > 0 else (y_base if len(y_base) > 0 else y_filt)
-                        all_z = np.concatenate([z_base, z_filt]) if len(z_base) > 0 and len(z_filt) > 0 else (z_base if len(z_base) > 0 else z_filt)
+                    if len(x_base_interp) > 0 or len(x_filt_interp) > 0:
+                        all_x = np.concatenate([x_base_interp, x_filt_interp]) if len(x_base_interp) > 0 and len(x_filt_interp) > 0 else (x_base_interp if len(x_base_interp) > 0 else x_filt_interp)
+                        all_y = np.concatenate([y_base_interp, y_filt_interp]) if len(y_base_interp) > 0 and len(y_filt_interp) > 0 else (y_base_interp if len(y_base_interp) > 0 else y_filt_interp)
+                        all_z = np.concatenate([z_base_spiral, z_filt_spiral]) if len(x_base_interp) > 0 and len(x_filt_interp) > 0 else (z_base_spiral if len(x_base_interp) > 0 else z_filt_spiral)
                         
                         max_range = np.array([all_x.max()-all_x.min(), 
                                              all_y.max()-all_y.min(), 
@@ -517,13 +558,14 @@ def create_3d_montage():
                         ax.set_zlim(mid_z - max_range, mid_z + max_range)
                     
                     # Add model label on the left side
-                    # if j == 0:
-                    #     ax.text2D(-0.15, 0.5, f'σ = {model.split("_")[-1]}', 
-                    #              transform=ax.transAxes,
-                    #              fontsize=14, fontweight='bold',
-                    #              va='center', ha='center', rotation=90)
+                    if j == 0:
+                        omega_value = model.split('_')[-1].replace('_', '.')
+                        ax.text2D(-0.15, 0.5, f'ω = 0.{omega_value}', 
+                                 transform=ax.transAxes,
+                                 fontsize=14, fontweight='bold',
+                                 va='center', ha='center', rotation=90)
                     
-                    print(f"    3D plot created with {len(x_base)} baseline and {len(x_filt)} filtered points")
+                    print(f"    3D plot created with {len(x_base_interp)} baseline and {len(x_filt_interp)} filtered points")
                 
                 except Exception as e:
                     print(f"    Error processing {drone}: {e}")
@@ -541,6 +583,9 @@ def create_3d_montage():
     # Add main title
     fig.suptitle('3D Trajectory Comparison - Baseline vs Filtered', 
                  fontsize=16, fontweight='bold', y=0.98)
+    
+    # Apply tight layout
+    # plt.tight_layout(rect=[0, 0, 1, 0.97])
     
     # Save figure
     output_path = base_dir / 'montage_3d_results.png'
@@ -631,22 +676,19 @@ def create_phase_montage():
                         # Add theoretical value lines
                         # Leader is ahead: ego - leader = -120°
                         # Follower is behind: ego - follower = +120°
-                        if neighbor == 'leader':
-                            ax.axhline(y=-120, color='g', linestyle='--', linewidth=2, 
-                                      label='Theoretical (-120°)', alpha=0.7)
-                        else:  # follower
-                            ax.axhline(y=120, color='g', linestyle='--', linewidth=2, 
-                                      label='Theoretical (+120°)', alpha=0.7)
+                        # if neighbor == 'leader':
+                        #     ax.axhline(y=120, color='g', linestyle='--', linewidth=2, 
+                        #               label='Theoretical (-120°)', alpha=0.7)
+                        # else:  # follower
+                        ax.axhline(y=120, color='g', linestyle='--', linewidth=2, 
+                                    label='Theoretical', alpha=0.7)
                         
-                        ax.set_ylabel('Phase Diff (deg)', fontsize=10)
+                        ax.set_ylabel('Phase Difference (deg)', fontsize=10)
                         ax.grid(True, alpha=0.3)
                         ax.tick_params(labelsize=9)
                         
-                        # Set x-axis limits
-                        ax.set_xlim(0, 22.5)
-                        
                         # Set y-axis limits to show the full range [-180, 180]
-                        ax.set_ylim(-180, 180)
+                        ax.set_ylim(100, 140)
                         
                         # Add legend only to the first (top) plot
                         if k == 0:
@@ -669,7 +711,7 @@ def create_phase_montage():
                         # Add model label on the left
                         if j == 0 and k == 0:  # Top row of leftmost column
                             omega_value = model.split('_')[-1].replace('_', '.')
-                            ax.text(-0.25, 0.5, f'ω = {omega_value}', 
+                            ax.text(-0.25, 0.5, f'ω = 0.{omega_value}', 
                                    transform=ax.transAxes,
                                    fontsize=14, fontweight='bold',
                                    va='center', ha='center', rotation=90)
@@ -693,6 +735,9 @@ def create_phase_montage():
     # Add main title
     fig.suptitle('Phase Difference Comparison - Baseline vs Filtered (Theoretical: 120°)', 
                  fontsize=16, fontweight='bold', y=0.98)
+    
+    # Apply tight layout
+    # plt.tight_layout(rect=[0, 0, 1, 0.97])
     
     # Save figure
     output_path = base_dir / 'montage_phase_results.png'
