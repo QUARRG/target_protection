@@ -185,15 +185,15 @@ class CircleDistortion(Node):
                     self.publish_omega.publish(omega_msg)
 
                     # Propagating the filter
-                    phase, position = self.filter.predict(omega, self.timer_period)
+                    phase, current_position, desired_position = self.filter.predict(omega, self.timer_period)
 
                     # Updating internal parameters
                     self.phases[1] = phase.data
                     self.publish_phase_differences()
 
-                    target_r = np.array([position.pose.position.x,
-                                         position.pose.position.y,
-                                         position.pose.position.z + self.hover_height])
+                    target_r = np.array([desired_position.pose.position.x,
+                                         desired_position.pose.position.y,
+                                         desired_position.pose.position.z + self.hover_height])
                     self.send_position(target_r)
             
             # Landing state
@@ -218,15 +218,15 @@ class CircleDistortion(Node):
         y = np.array([gps_pose.pose.position.x,
                       gps_pose.pose.position.y,
                       gps_pose.pose.position.z]).reshape((3, 1))
-        phase, position = self.filter.update(y)
+        phase, current_position, desired_position = self.filter.update(y)
 
         # Updating internal parameters
         self.phases[1] = phase.data
         self.publish_phase_differences()
 
-        target_r = np.array([position.pose.position.x,
-                             position.pose.position.y,
-                             position.pose.position.z + self.hover_height])
+        target_r = np.array([desired_position.pose.position.x,
+                             desired_position.pose.position.y,
+                             desired_position.pose.position.z + self.hover_height])
         self.send_position(target_r)
 
     def _poses_changed(self, robot_pose: PoseStamped):

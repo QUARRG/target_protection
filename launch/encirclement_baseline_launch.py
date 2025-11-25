@@ -110,7 +110,7 @@ def parse_yaml(context):
             name=robot+'_circle_distortion',
             output='screen',
             parameters=[{'robot': robot, 'number_of_agents': len(robots_list)} \
-                        | filter_yaml_content.get('circle_distortion_filters', {}).get('ros__parameters', {})],
+                        | filter_yaml_content.get('FilterGPS', {})],
             ))
         
         # GPS Node for each robot
@@ -119,7 +119,7 @@ def parse_yaml(context):
             executable='gps',
             name=robot+'_gps_node',
             output='screen',
-            parameters=[{'robot': robot} | filter_yaml_content.get('circle_distortion_filters', {}).get('ros__parameters', {})],
+            parameters=[{'robot': robot} | filter_yaml_content.get('FilterGPS', {})],
         ))
 
         # Watch dog node for each robot
