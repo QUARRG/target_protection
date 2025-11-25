@@ -68,7 +68,7 @@ def orthonormalize(R: np.ndarray) -> np.ndarray:
     return U @ Vt
 
 
-def phase_controller(phase_ego, phase_leader, phase_follower, phi_dot_nominal, k_p=1.0):
+def phase_controller(phase_ego, phase_leader, phase_follower, omega_nominal, k_p=1.0):
     """
     A simple PD controller to adjust the phase angle of the ego vehicle
     based on the angles of the vehicles ahead and behind.
@@ -82,7 +82,7 @@ def phase_controller(phase_ego, phase_leader, phase_follower, phi_dot_nominal, k
 
     eps = 1e-6  # small constant to avoid division by zero
 
-    control_signal = phi_dot_nominal + k_p * (1/(error_ahead + eps) + 1/(error_behind + eps))
+    control_signal = omega_nominal + k_p * (1/(error_ahead + eps) + 1/(error_behind + eps))
 
     return control_signal
 # ----------------------------------------------------------------------
@@ -183,7 +183,7 @@ class BaseFilter:
         self.pub_radius.publish(radius_msg)
         # self.node.get_logger().info(f'Published pose for agent {self.name}')
 
-        return phase_msg, desired_pose_msg
+        return phase_msg, current_pose_msg, desired_pose_msg
 
 
 class FilterGPS(BaseFilter):
@@ -230,7 +230,79 @@ class FilterGPS(BaseFilter):
         self.pub_phase.publish(phase_msg)
         self.pub_radius.publish(radius_msg)
 
-        return phase_msg, desired_pose_msg
+        return phase_msg, current_pose_msg, desired_pose_msg
+
+
+class FilterRelative(BaseFilter):
+    ''' LIEKF for encirclement tasks using GPS-Scanner-like measurements.
+    '''
+    def __init__(self, name: str, embedding_fn_name: str, params: dict, node: Node):
+        self.name = name
+        self.embedding_fn_name = embedding_fn_name
+        self.params = params
+        self.node: Node = node
+
+        # Checking embedding function
+        if embedding_fn_name not in REGISTRED_OMEGA_FUNCTIONS:
+            raise ValueError(f"Embedding function '{embedding_fn_name}' is not allowed. Choose from: {list(REGISTRED_OMEGA_FUNCTIONS.keys())}")
+        self.embedding_fn: Callable = REGISTRED_OMEGA_FUNCTIONS[embedding_fn_name]
+
+        # Initialize filter parameters         
+        self.P: np.ndarray  = np.diag(np.square(self.params.get('P_rel', np.zeros(4))))
+        self.Q: np.ndarray  = np.diag(np.square(self.params.get('Q_rel', np.zeros(4))))
+        self.V: np.ndarray  = np.diag(np.square(self.params.get('V_rel', np.zeros(3))))
+        self.Rc: np.ndarray = self.build_Rc(wrap_to_pi(self.params.get('phase_guess', 0.0)))
+        self.radius: float  = self.params.get('radius_guess', 2.0)
+        self.radius_nominal: float = self.params.get('radius_nominal', 2.0)
+        self.s: float = np.log(self.radius)
+        self.e_x: np.ndarray = np.asarray([[1.], [0.], [0.]])
+
+    def predict(self, omega_z: float, dt: float) -> float:
+        # Update theta based on omega_z and time step
+        self.Rc = exp_SO3(np.asarray([0., 0., omega_z * dt])) @ self.Rc
+        self.Rc = orthonormalize(self.Rc)
+        # self.r = self.r  # constant radius
+        
+        # Predict the next covariance
+        F = self.build_Rc(omega_z * dt)
+        Q = self.Q.copy()
+        self.P = F @ self.P @ F.T + Q * dt
+        self.P = (self.P + self.P.T) / 2  # Ensure symmetry
+
+        return Float32(data=self.get_phase(self.Rc))
+
+    def update(self, y: np.ndarray, Rei: np.ndarray, Rci: np.ndarray, qi: np.ndarray):
+        # Measurement Jacobian
+        Rck = self.Rc.copy()
+        Rek = self.build_Re(self.get_phase(Rck))
+        H = -Rck.T @ Rci.T @ Rei.T @ Rek @ Rck @ skew(self.e_x * self.radius_nominal)
+
+        # Kalman Gain
+        V = Rck.T @ self.V @ Rck
+        S = H @ self.P @ H.T + V
+        IdS = np.eye(S.shape[0])
+        S = 0.5 * np.add(S, S.T) + IdS * 1e-8
+        S_inv = np.linalg.inv(S)
+        K = self.P @ H.T @ S_inv
+
+        # Update state
+        y_hat = Rci.T @ Rei.T @ (Rek @ Rck @ (self.e_x * self.radius_nominal) - qi)
+        z = Rck.T @ (y - y_hat)
+        # print(f"NIS: {np.squeeze(z.T @ S_inv @ z).item():.3f}")
+
+        delta = K @ z.flatten()                   # Correction vector in the algebra
+        theta_correction = exp_SO3(delta)         # Exponential map to group element
+        Rck = theta_correction @ Rck      
+        Rck = orthonormalize(Rck)
+        self.Rc = Rck
+
+        # Update covariance
+        I_KH = np.eye(3) - K @ H
+        self.P = I_KH @ self.P @ I_KH.T + K @ V @ K.T
+        self.P = 0.5 * np.add(self.P, self.P.T)
+        
+        return Float32(data=self.get_phase(self.Rc))
+
 
 class BaselineFilter(BaseFilter):
     ''' Baseline filter without state estimation for encirclement tasks.

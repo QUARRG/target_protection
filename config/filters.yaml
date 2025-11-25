@@ -1,17 +1,35 @@
 
-circle_distortion_filters:
-  ros__parameters:
-    # Kalman filter parameters
-    P: [0.0001, 0.0001, 0.25, 0.0001]
-    Q: [0.0, 0.0, 0.001, 0.0001]
-    V: [0.1, 0.1, 0.1]
-    predict_hz: 10.0
-    update_hz: 10.0
-    seed: 42
-    # Parameters for circle distortion
-    embedding_fn_name: modelD
-    frame_id: world
-    hover_height: 0.9  # meters
-    radius_nominal: 1.0  # meters
-    omega_nominal: 0.2   # radians per second
-    k_phi: 0.1
+FilterGPS:
+  # Kalman filter parameters
+  P: [0.0001, 0.0001, 0.25, 0.0001]
+  Q: [0.0, 0.0, 0.001, 0.0001]
+  V: [0.1, 0.1, 0.1]
+  predict_hz: 10.0
+  update_hz: 10.0
+  seed: 42
+  # Parameters for circle distortion
+  embedding_fn_name: modelD
+  frame_id: world
+  hover_height: 0.9  # meters
+  radius_nominal: 1.0  # meters
+  omega_nominal: 0.2   # radians per second
+  k_phi: 0.1
+
+FilterRelative:
+  # Kalman filter parameters
+  P_ego: [0.0001, 0.0001, 0.25, 0.0001]
+  Q_ego: [0.0, 0.0, 0.001, 0.0001]
+  V_ego: [0.1, 0.1, 0.1]
+  P_rel: [0.0001, 0.0001, 0.25]
+  Q_rel: [0.0, 0.0, 0.01]
+  V_rel: [0.1, 0.1, 0.1]
+  predict_hz: 10.0
+  update_hz: 10.0
+  seed: 42
+  # Parameters for circle distortion
+  embedding_fn_name: modelD
+  frame_id: world
+  hover_height: 0.9  # meters
+  radius_nominal: 1.0  # meters
+  omega_nominal: 0.2   # radians per second
+  k_phi: 0.1
