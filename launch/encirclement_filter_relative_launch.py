@@ -106,7 +106,7 @@ def parse_yaml(context):
         # Nodes for each robot
         Nodes.append(Node(
             package='crazy_encirclement',
-            executable='circle_distortion_baseline',
+            executable='circle_distortion_filter_relative',
             name=robot+'_circle_distortion',
             output='screen',
             parameters=[{'robot': robot, 'number_of_agents': len(robots_list)} \

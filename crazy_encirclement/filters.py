@@ -21,11 +21,14 @@ def omega_func_modelC(theta: float) -> np.ndarray:
 def omega_func_modelD(theta: float) -> np.ndarray:
     return np.asarray([0.2 * np.cos(3 * theta) * np.sin(theta), 0.5 * 0.9, 0.])
 
+def omega_func_modelE(theta: float) -> np.ndarray:
+    return np.asarray([0.0, 0.0, 0.])
 REGISTRED_OMEGA_FUNCTIONS = {
     'modelA': omega_func_modelA,
     'modelB': omega_func_modelB,
     'modelC': omega_func_modelC,
-    'modelD': omega_func_modelD
+    'modelD': omega_func_modelD,
+    'modelE': omega_func_modelE,
 }
 # ----------------------------------------------------------------------
 
@@ -248,9 +251,9 @@ class FilterRelative(BaseFilter):
         self.embedding_fn: Callable = REGISTRED_OMEGA_FUNCTIONS[embedding_fn_name]
 
         # Initialize filter parameters         
-        self.P: np.ndarray  = np.diag(np.square(self.params.get('P_rel', np.zeros(4))))
-        self.Q: np.ndarray  = np.diag(np.square(self.params.get('Q_rel', np.zeros(4))))
-        self.V: np.ndarray  = np.diag(np.square(self.params.get('V_rel', np.zeros(3))))
+        self.P: np.ndarray  = np.diag(np.square(self.params.get('P', np.zeros(3))))
+        self.Q: np.ndarray  = np.diag(np.square(self.params.get('Q', np.zeros(3))))
+        self.V: np.ndarray  = np.diag(np.square(self.params.get('V', np.zeros(3))))
         self.Rc: np.ndarray = self.build_Rc(wrap_to_pi(self.params.get('phase_guess', 0.0)))
         self.radius: float  = self.params.get('radius_guess', 2.0)
         self.radius_nominal: float = self.params.get('radius_nominal', 2.0)
@@ -274,7 +277,7 @@ class FilterRelative(BaseFilter):
     def update(self, y: np.ndarray, Rei: np.ndarray, Rci: np.ndarray, qi: np.ndarray):
         # Measurement Jacobian
         Rck = self.Rc.copy()
-        Rek = self.build_Re(self.get_phase(Rck))
+        Rek = self.build_Re(self.embedding_fn, self.get_phase(Rck))
         H = -Rck.T @ Rci.T @ Rei.T @ Rek @ Rck @ skew(self.e_x * self.radius_nominal)
 
         # Kalman Gain

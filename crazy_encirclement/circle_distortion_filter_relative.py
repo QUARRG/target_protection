@@ -126,7 +126,7 @@ class CircleDistortion(Node):
             'Q': self.Q_ego_list,
             'V': self.V_ego_list,
             'radius_nominal': self.radius_nominal,
-            'radius_guess': 0.0,
+            'radius_guess': self.radius_nominal,
             'phase_guess': 0.0,
             'frame_id': self.frame_id
         }
@@ -191,7 +191,7 @@ class CircleDistortion(Node):
 
         # Create subscriber for filter updates using the GPS measurements
         self.create_subscription(
-            PoseStamped,
+            NamedPoseArray,
             f'/{self.robot}/gps_scanner_position',
             self.update_callback,
             10
@@ -297,7 +297,7 @@ class CircleDistortion(Node):
         qi = np.asarray([current_position.pose.position.x,
                          current_position.pose.position.y,
                          current_position.pose.position.z]).reshape((3, 1))
-        Rei = self.filter_gps.build_Re(phase_ego.data)
+        Rei = self.filter_gps.build_Re(self.filter_gps.embedding_fn, phase_ego.data)
         Rci = self.filter_gps.Rc
 
         rel_noise = np.random.multivariate_normal(np.zeros(3), np.diag(np.square(self.V_rel_list))).reshape((3,1))
