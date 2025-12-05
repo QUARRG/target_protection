@@ -773,9 +773,9 @@ def create_phase_montage(processed_data):
                         t_filt = np.array([])
                     
                     # Plot absolute phase difference data
-                    # if len(t_base) > 0:
-                    #     ax.plot(t_base, baseline_phase_abs, 'b-', 
-                    #             label='Baseline', alpha=0.7, linewidth=1.5)
+                    if len(t_base) > 0:
+                        ax.plot(t_base, baseline_phase_abs, 'b-', 
+                                label='Baseline', alpha=0.7, linewidth=1.5)
                     if len(t_filt) > 0:
                         ax.plot(t_filt, filtered_phase_abs, 'r-', 
                                 label='Filtered', alpha=0.7, linewidth=1.5)

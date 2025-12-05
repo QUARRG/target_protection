@@ -19,11 +19,12 @@ drones = ['C04', 'C05', 'C14']
 CROP_DURATION = 60.0
 
 # Smoothing configuration
-ENABLE_SMOOTHING = True  # Disabled - only outlier removal
-SMOOTHING_WINDOW = 11  # Window size for median filter (must be odd)
-OUTLIER_THRESHOLD = 1.0  # MAD threshold for outlier detection (lower = more aggressive)
+ENABLE_SMOOTHING = False  # Enable Savitzky-Golay smoothing
+SMOOTHING_WINDOW = 11  # Window size for Savitzky-Golay filter (must be odd)
+SMOOTHING_METHOD = 'savgol'  # Use Savitzky-Golay filter to preserve dynamics
+ENABLE_OUTLIER_REMOVAL = True  # Enable outlier detection and interpolation
+OUTLIER_THRESHOLD = 1.5  # Threshold for outlier detection (std from median, lower = more aggressive)
 OUTLIER_WINDOW = 11  # Window size for outlier detection
-ENABLE_OUTLIER_REMOVAL = True  # Enable outlier removal for high-frequency spikes
 
 # Drone relationships: ego -> (follower, leader)
 DRONE_RELATIONSHIPS = {
@@ -114,7 +115,7 @@ def get_phase_column(df, drone, source='filtered'):
         phase_cols = [col for col in df.columns if drone in col and 'phase' in col.lower()]
     
     if len(phase_cols) > 0:
-        return phase_cols[0]
+        return phase_cols[0]   
     
     return None
 
@@ -135,7 +136,7 @@ def compute_phase_diff_unit_vector(phase_ego, phase_other):
     unit_other = np.array([np.cos(phase_other), np.sin(phase_other)])
     
     # Compute dot product and clip to [-1, 1] to avoid numerical issues with arccos
-    dot_product = np.clip(np.dot(unit_ego, unit_other), -1.0, 1.0)
+    dot_product = np.dot(unit_ego, unit_other)
     
     # Phase difference in radians, then convert to degrees
     phi_diff_rad = np.arccos(dot_product)
@@ -144,22 +145,33 @@ def compute_phase_diff_unit_vector(phase_ego, phase_other):
     return phi_diff_deg
 
 
-def smooth_signal(signal, window_size=5, method='median'):
+def smooth_signal(signal, window_size=11, method='savgol'):
     """
-    Smooth a signal to remove outliers and spikes.
+    Smooth a signal using Savitzky-Golay filter to preserve dynamics.
     
     Args:
         signal: 1D numpy array to smooth
-        window_size: Size of the smoothing window (must be odd for median filter)
-        method: 'median' or 'moving_average'
+        window_size: Size of the smoothing window (must be odd)
+        method: 'savgol', 'median', or 'moving_average'
     
     Returns:
         Smoothed signal
     """
-    if len(signal) < window_size:
+    if len(signal) < 5:
         return signal
     
-    if method == 'median':
+    if method == 'savgol':
+        from scipy.signal import savgol_filter
+        # Ensure window size is odd and valid
+        if window_size % 2 == 0:
+            window_size += 1
+        window_size = min(window_size, len(signal) if len(signal) % 2 == 1 else len(signal) - 1)
+        if window_size < 5:
+            window_size = 5
+        # Use polynomial order 3 to preserve shape
+        polyorder = min(3, window_size - 2)
+        smoothed = savgol_filter(signal, window_length=window_size, polyorder=polyorder)
+    elif method == 'median':
         from scipy.signal import medfilt
         # Ensure window size is odd
         if window_size % 2 == 0:
@@ -174,47 +186,54 @@ def smooth_signal(signal, window_size=5, method='median'):
     return smoothed
 
 
-def remove_outliers(signal, threshold=3.0, window_size=10):
+def remove_outliers(signal, threshold=2.5, window_size=15):
     """
-    Remove outliers from signal using two-step approach:
-    1. Apply median filter to remove spikes
-    2. Replace remaining outliers using local statistics
+    Find outliers, remove them, and replace with interpolated values.
     
     Args:
         signal: 1D numpy array
-        threshold: Number of std for outlier detection (default 3.0)
+        threshold: Number of std for outlier detection (lower = more aggressive)
         window_size: Size of the local window for outlier detection
     
     Returns:
-        Signal with outliers removed
+        Signal with outliers replaced by interpolation
     """
-    if len(signal) < 5:
+    if len(signal) < 3:
         return signal
     
-    # Step 1: Apply median filter to remove spikes
-    from scipy.signal import medfilt
-    # Use kernel size of 5 (must be odd)
-    signal_filtered = medfilt(signal, kernel_size=5)
+    cleaned = signal.copy()
+    outlier_indices = []
     
-    # Step 2: Additional outlier removal using local statistics
-    if len(signal_filtered) < window_size:
-        return signal_filtered
-    
-    cleaned = signal_filtered.copy()
-    
-    for i in range(len(signal_filtered)):
+    # Step 1: Identify all outlier indices
+    for i in range(len(signal)):
         # Define local window
         start_idx = max(0, i - window_size // 2)
-        end_idx = min(len(signal_filtered), i + window_size // 2 + 1)
-        local_window = signal_filtered[start_idx:end_idx]
+        end_idx = min(len(signal), i + window_size // 2 + 1)
+        local_window = signal[start_idx:end_idx]
         
         # Compute local statistics
         local_median = np.median(local_window)
         local_std = np.std(local_window)
         
-        # Replace outliers (> threshold std from median) with median
-        if abs(signal_filtered[i] - local_median) > threshold * local_std:
-            cleaned[i] = local_median
+        # Mark as outlier if deviation is too large
+        if local_std > 0 and abs(signal[i] - local_median) > threshold * local_std:
+            outlier_indices.append(i)
+    
+    # Step 2: Replace outliers with interpolated values
+    if len(outlier_indices) > 0:
+        # Create array of good (non-outlier) indices
+        good_indices = np.array([i for i in range(len(signal)) if i not in outlier_indices])
+        
+        if len(good_indices) >= 2:
+            # Get good values
+            good_values = signal[good_indices]
+            
+            # Interpolate outlier values from good values
+            outlier_indices_array = np.array(outlier_indices)
+            interpolated_values = np.interp(outlier_indices_array, good_indices, good_values)
+            
+            # Replace outliers with interpolated values
+            cleaned[outlier_indices_array] = interpolated_values
     
     return cleaned
 
@@ -281,12 +300,7 @@ def plot_phase_differences():
                     # Get time column
                     timestamp_cols = [col for col in df.columns if 'time' in col.lower() or 'stamp' in col.lower()]
                     time_col = timestamp_cols[0] if len(timestamp_cols) > 0 else None
-                    
-                    # if time_col is None:
-                    #     time_data = np.arange(len(df)) / 100.0
-                    # else:
-                    #     time_data = df[time_col].values
-                    
+                                       
                     # Get valid data for each drone separately (data may not be synced)
                     ego_valid = df[[time_col, ego_phase_col]].dropna()
                     follower_valid = df[[time_col, follower_phase_col]].dropna()
@@ -295,43 +309,73 @@ def plot_phase_differences():
                     if len(ego_valid) == 0 or len(follower_valid) == 0 or len(leader_valid) == 0:
                         print(f"  Skipping {csv_path.name}: insufficient valid data")
                         continue
+
+                    total_length = min(len(ego_valid), len(follower_valid), len(leader_valid))
                     
                     # Extract time and phase for each drone
                     time_ego = ego_valid[time_col].values
+                    time_ego = time_ego[:total_length]
                     phase_ego = ego_valid[ego_phase_col].values
+                    phase_ego = phase_ego[:total_length]
                     
                     time_follower = follower_valid[time_col].values
+                    time_follower = time_follower[:total_length]
                     phase_follower = follower_valid[follower_phase_col].values
+                    phase_follower = phase_follower[:total_length]
                     
                     time_leader = leader_valid[time_col].values
+                    time_leader = time_leader[:total_length]
                     phase_leader = leader_valid[leader_phase_col].values
+                    phase_leader = phase_leader[:total_length]
+
+                    # Wrap phases to 0-2pi
+                    # phase_ego = np.mod(phase_ego, 2 * np.pi)
+                    # phase_follower = np.mod(phase_follower, 2 * np.pi)
+                    # phase_leader = np.mod(phase_leader, 2 * np.pi)
                     
-                    # Apply smoothing to raw phase signals if enabled
-                    if ENABLE_SMOOTHING:
-                        phase_ego = remove_outliers(phase_ego, threshold=OUTLIER_THRESHOLD, window_size=OUTLIER_WINDOW)
-                        # phase_ego = smooth_signal(phase_ego, window_size=SMOOTHING_WINDOW, method='median')
-                        
-                        phase_follower = remove_outliers(phase_follower, threshold=OUTLIER_THRESHOLD, window_size=OUTLIER_WINDOW)
-                        # phase_follower = smooth_signal(phase_follower, window_size=SMOOTHING_WINDOW, method='median')
-                        
-                        phase_leader = remove_outliers(phase_leader, threshold=OUTLIER_THRESHOLD, window_size=OUTLIER_WINDOW)
-                        # phase_leader = smooth_signal(phase_leader, window_size=SMOOTHING_WINDOW, method='median')
+                    # Unwrap phases to handle discontinuities (assumes phases in degrees)
+                    # phase_ego = np.unwrap(phase_ego, period=360)
+                    # phase_follower = np.unwrap(phase_follower, period=360)
+                    # phase_leader = np.unwrap(phase_leader, period=360)
                     
-                    # Use ego drone's timeline as reference
+                    # # Remove outliers and smooth raw phase signals if enabled
+                    # if ENABLE_OUTLIER_REMOVAL:
+                    #     phase_ego = remove_outliers(phase_ego, threshold=OUTLIER_THRESHOLD, window_size=OUTLIER_WINDOW)
+                    #     phase_follower = remove_outliers(phase_follower, threshold=OUTLIER_THRESHOLD, window_size=OUTLIER_WINDOW)
+                    #     phase_leader = remove_outliers(phase_leader, threshold=OUTLIER_THRESHOLD, window_size=OUTLIER_WINDOW)
+                    
+                    # if ENABLE_SMOOTHING:
+                    #     phase_ego = smooth_signal(phase_ego, window_size=SMOOTHING_WINDOW, method=SMOOTHING_METHOD)
+                    #     phase_follower = smooth_signal(phase_follower, window_size=SMOOTHING_WINDOW, method=SMOOTHING_METHOD)
+                    #     phase_leader = smooth_signal(phase_leader, window_size=SMOOTHING_WINDOW, method=SMOOTHING_METHOD)
+                    
+                    # # Use ego drone's timeline as reference
                     time_reference = time_ego
                     
-                    # Interpolate follower and leader phases to match ego timeline
-                    phase_follower_interp = np.interp(time_reference, time_follower, phase_follower)
-                    phase_leader_interp = np.interp(time_reference, time_leader, phase_leader)
+                    # # Interpolate follower and leader phases to match ego timeline
+                    # phase_follower_interp = np.interp(time_reference, time_follower, phase_follower)
+                    # phase_leader_interp = np.interp(time_reference, time_leader, phase_leader)
+
+                    # fig, ax = plt.subplots()
+                    # ax.plot(time_reference, np.degrees(phase_ego), 'k-', label='Ego Phase', alpha=0.7)
+                    # ax.plot(time_reference, np.degrees(phase_follower_interp), 'r-', label='Follower Phase', alpha=0.7)
+                    # ax.plot(time_reference, np.degrees(phase_leader_interp), 'b-', label='Leader Phase', alpha=0.7)
+                    # plt.legend()
+                    # plt.savefig('/home/paulo/ros_ws/src/crazy_encirclement/crazy_encirclement/misc/tmp/debug_phases.png', dpi=150)
+                    # # plt.close(fig)
+                    
+
+                    # print(f"    Using {total_length} samples from {csv_path.name}")
+                    # print(f"lenghts: ego={len(phase_ego)}, follower={len(phase_follower)}, leader={len(phase_leader)}")
                     
                     # Compute phase differences using unit vector method (from smoothed phases)
                     phi_diff_follower = np.array([
-                        compute_phase_diff_unit_vector(phase_ego[k], phase_follower_interp[k])
+                        compute_phase_diff_unit_vector(phase_ego[k], phase_follower[k])
                         for k in range(len(phase_ego))
                     ])
                     
                     phi_diff_leader = np.array([
-                        compute_phase_diff_unit_vector(phase_ego[k], phase_leader_interp[k])
+                        compute_phase_diff_unit_vector(phase_ego[k], phase_leader[k])
                         for k in range(len(phase_ego))
                     ])
                     
@@ -354,7 +398,7 @@ def plot_phase_differences():
                 if i == 0:
                     ax.set_title(f'{drone}', fontsize=12, fontweight='bold')
                 if j == 0:
-                    omega_value = speed.replace('_', '.')
+                    omega_value = speed.split('_')[1]
                     ax.set_ylabel(f'ω = 0.{omega_value}\nPhase Diff (deg)', fontsize=10)
                 else:
                     ax.set_ylabel('Phase Diff (deg)', fontsize=10)
@@ -425,7 +469,7 @@ def plot_phase_errors():
                 print(f"Processing errors speed={speed}, drone={drone}: found {len(csv_files)} CSV files")
                 
                 # Plot zero error line (theoretical)
-                ax.axhline(y=0, color='g', linestyle='--', linewidth=2, 
+                ax.axhline(y=0, color='k', linestyle='--', linewidth=3, 
                           label='Zero Error (120°)', alpha=0.7, zorder=1)
                 
                 # Collect all phase errors from CSV files
@@ -454,11 +498,6 @@ def plot_phase_errors():
                     timestamp_cols = [col for col in df.columns if 'time' in col.lower() or 'stamp' in col.lower()]
                     time_col = timestamp_cols[0] if len(timestamp_cols) > 0 else None
                     
-                    # if time_col is None:
-                    #     time_data = np.arange(len(df)) / 100.0
-                    # else:
-                    #     time_data = df[time_col].values
-                    
                     # Get valid data for each drone separately (data may not be synced)
                     ego_valid = df[[time_col, ego_phase_col]].dropna()
                     follower_valid = df[[time_col, follower_phase_col]].dropna()
@@ -467,33 +506,46 @@ def plot_phase_errors():
                     if len(ego_valid) == 0 or len(follower_valid) == 0 or len(leader_valid) == 0:
                         print(f"  Skipping {csv_path.name}: insufficient valid data")
                         continue
+
+                    total_length = min(len(ego_valid), len(follower_valid), len(leader_valid))
                     
                     # Extract time and phase for each drone
-                    time_ego = ego_valid[time_col].values
-                    phase_ego = ego_valid[ego_phase_col].values
+                    time_ego = ego_valid[time_col].values[:total_length]
+                    phase_ego = ego_valid[ego_phase_col].values[:total_length]
                     
-                    time_follower = follower_valid[time_col].values
-                    phase_follower = follower_valid[follower_phase_col].values
+                    time_follower = follower_valid[time_col].values[:total_length]
+                    phase_follower = follower_valid[follower_phase_col].values[:total_length]
                     
-                    time_leader = leader_valid[time_col].values
-                    phase_leader = leader_valid[leader_phase_col].values
+                    time_leader = leader_valid[time_col].values[:total_length]
+                    phase_leader = leader_valid[leader_phase_col].values[:total_length]
                     
-                    # Remove outliers from raw phase signals if enabled
-                    if ENABLE_OUTLIER_REMOVAL:
-                        phase_ego = remove_outliers(phase_ego, threshold=OUTLIER_THRESHOLD, window_size=OUTLIER_WINDOW)
-                        phase_follower = remove_outliers(phase_follower, threshold=OUTLIER_THRESHOLD, window_size=OUTLIER_WINDOW)
-                        phase_leader = remove_outliers(phase_leader, threshold=OUTLIER_THRESHOLD, window_size=OUTLIER_WINDOW)
-                    phase_follower_interp = np.interp(time_ego, time_follower, phase_follower)
-                    phase_leader_interp = np.interp(time_ego, time_leader, phase_leader)
+                    # Unwrap phases to handle discontinuities (assumes phases in degrees)
+                    # phase_ego = np.unwrap(phase_ego, period=360)
+                    # phase_follower = np.unwrap(phase_follower, period=360)
+                    # phase_leader = np.unwrap(phase_leader, period=360)
+                    
+                    # # Remove outliers and smooth raw phase signals if enabled
+                    # if ENABLE_OUTLIER_REMOVAL:
+                    #     phase_ego = remove_outliers(phase_ego, threshold=OUTLIER_THRESHOLD, window_size=OUTLIER_WINDOW)
+                    #     phase_follower = remove_outliers(phase_follower, threshold=OUTLIER_THRESHOLD, window_size=OUTLIER_WINDOW)
+                    #     phase_leader = remove_outliers(phase_leader, threshold=OUTLIER_THRESHOLD, window_size=OUTLIER_WINDOW)
+                    
+                    # if ENABLE_SMOOTHING:
+                    # phase_ego = smooth_signal(phase_ego, window_size=SMOOTHING_WINDOW, method=SMOOTHING_METHOD)
+                    # phase_follower = smooth_signal(phase_follower, window_size=SMOOTHING_WINDOW, method=SMOOTHING_METHOD)
+                    # phase_leader = smooth_signal(phase_leader, window_size=SMOOTHING_WINDOW, method=SMOOTHING_METHOD)
+                    
+                    # phase_follower_interp = np.interp(time_ego, time_follower, phase_follower)
+                    # phase_leader_interp = np.interp(time_ego, time_leader, phase_leader)
                     
                     # Compute phase differences using unit vector method (from smoothed phases)
                     phi_diff_follower = np.array([
-                        compute_phase_diff_unit_vector(phase_ego[k], phase_follower_interp[k])
+                        compute_phase_diff_unit_vector(phase_ego[k], phase_follower[k])
                         for k in range(len(phase_ego))
                     ])
                     
                     phi_diff_leader = np.array([
-                        compute_phase_diff_unit_vector(phase_ego[k], phase_leader_interp[k])
+                        compute_phase_diff_unit_vector(phase_ego[k], phase_leader[k])
                         for k in range(len(phase_ego))
                     ])
                     
@@ -552,13 +604,13 @@ def plot_phase_errors():
                     ax.plot(time_common, mean_error_leader, 'b-', linewidth=2.0, 
                            label=f'Error to Leader ({leader})', zorder=3)
                     ax.fill_between(time_common, 
-                                    mean_error_leader - 3 * std_error_leader,
-                                    mean_error_leader + 3 * std_error_leader,
+                                    mean_error_leader - std_error_leader,
+                                    mean_error_leader + std_error_leader,
                                     color='blue', alpha=0.2, zorder=2)
                 
                 # Configure plot
                 ax.grid(True, alpha=0.3)
-                ax.set_ylim(-20, 20)
+                ax.set_ylim(-45, 45)
                 
                 # Labels
                 if i == 0:
