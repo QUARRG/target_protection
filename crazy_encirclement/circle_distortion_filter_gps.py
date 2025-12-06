@@ -65,6 +65,7 @@ class CircleDistortion(Node):
         # Flags and variables
         self.timer_period = 1.0 / self.predict_hz
         self.initial_phase = 0.0
+        self.initial_radius = self.radius_nominal
         self.initial_pose = np.zeros(3)
         self.order = []
 
@@ -120,7 +121,7 @@ class CircleDistortion(Node):
             10)    
 
         # Wait until order is received
-        while (not self.has_order):
+        while (not self.has_order): #and (self.initial_radius is None):
             rclpy.spin_once(self, timeout_sec=0.1)
 
         # Create filter instance

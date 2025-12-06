@@ -42,6 +42,7 @@ class CircleDistortion(Node):
 
         # Desired phase difference
         self.desired_phase_diff = 2.0 * np.pi / self.n_agents
+        self.initial_radius = self.radius_nominal
 
         # Filter parameters
         self.declare_parameter('predict_hz', 50.0)
