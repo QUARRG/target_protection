@@ -250,7 +250,7 @@ class CircleDistortion(Node):
             self.initial_radius = np.sqrt(self.initial_pose[0]**2 + self.initial_pose[1]**2)
 
             # Adjusting filter parameters based on initial position
-            self.filter.pub_phase.publish(Float32(data=self.initial_phase))
+
             self.takeoff_traj(4)
             self.has_initial_pose = True    
             
