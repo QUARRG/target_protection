@@ -253,6 +253,7 @@ class CircleDistortion(Node):
             self.initial_pose[1] = robot_pose.pose.position.y
             self.initial_pose[2] = robot_pose.pose.position.z   
             self.initial_phase = wrap_to_pi(np.arctan2(self.initial_pose[1], self.initial_pose[0]))   
+            self.filter.pub_phase.publish(Float32(data=self.initial_phase))
             self.initial_radius = np.sqrt(self.initial_pose[0]**2 + self.initial_pose[1]**2)
             self.takeoff_traj(4)
             self.has_initial_pose = True    
