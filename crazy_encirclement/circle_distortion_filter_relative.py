@@ -120,14 +120,20 @@ class CircleDistortion(Node):
         while (not self.has_order):
             rclpy.spin_once(self, timeout_sec=0.1)
 
-        # Create filter instance
+        # Wait until initial pose is received from Vicon
+        while (not self.has_initial_pose):
+            rclpy.spin_once(self, timeout_sec=0.1)
+        
+        self.info(f"Initial pose received: phase={self.initial_phase:.3f}, radius={self.initial_radius:.3f}")
+
+        # Create filter instance using actual measured initial values
         self.filter_gps_params = {
             'P': self.P_ego_list,
             'Q': self.Q_ego_list,
             'V': self.V_ego_list,
             'radius_nominal': self.radius_nominal,
-            'radius_guess': self.radius_nominal,
-            'phase_guess': 0.0,
+            'radius_guess': self.initial_radius + np.random.normal(0, 0.15),
+            'phase_guess': self.initial_phase + np.random.normal(0, 0.1),
             'frame_id': self.frame_id
         }
         self.filter_gps = FilterGPS(self.robot, self.embedding_fn_name, self.filter_gps_params, self)
@@ -331,11 +337,7 @@ class CircleDistortion(Node):
             self.initial_radius = np.sqrt(self.initial_pose[0]**2 + self.initial_pose[1]**2)
 
             # Adjusting filter parameters based on initial position
-            self.filter_gps.radius = self.initial_radius + np.random.normal(0, 0.15)
-            self.filter_gps.s = np.log(self.filter_gps.radius)  # Keep s consistent with radius
-            self.filter_gps.Rc = self.filter_gps.build_Rc(wrap_to_pi(self.initial_phase + np.random.normal(0, 0.1)))
             self.filter_gps.pub_phase.publish(Float32(data=self.initial_phase))
-
             self.takeoff_traj(4)
             self.has_initial_pose = True    
             

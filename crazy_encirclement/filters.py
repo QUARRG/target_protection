@@ -202,7 +202,7 @@ class BaseFilter:
         F = np.eye(4)
         F[0:3, 0:3] = build_Rc(omega_z * dt)
         Q = self.Q.copy()
-        Q[3, 3] = ((Q[3, 3]**0.5) / np.exp(self.s)) ** 2
+        # Q[3, 3] = ((Q[3, 3]**0.5) / np.exp(self.s)) ** 2
         self.P = F @ self.P @ F.T + Q * dt
         self.P = (self.P + self.P.T) / 2  # Ensure symmetry
 

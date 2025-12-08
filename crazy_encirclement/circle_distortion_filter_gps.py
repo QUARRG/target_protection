@@ -146,12 +146,6 @@ class CircleDistortion(Node):
         self.create_subscription(Float32, f'/{self.leader}/filtered/phase',   self._phase_callback_leader, 1)
         self.create_subscription(Float32, f'/{self.follower}/filtered/phase', self._phase_callback_follower, 1)
 
-        # Wait until leader and follower phases are received
-        # while (not self.has_phase_leader or not self.has_phase_follower):
-        #     rclpy.spin_once(self, timeout_sec=0.1)
-        
-        # self.info(f"Leader and follower phases received: leader={self.phases[0]:.3f}, follower={self.phases[2]:.3f}")
-
         # Create subscriber for filter updates using the GPS measurements
         self.create_subscription(
             PoseStamped,
@@ -253,8 +247,10 @@ class CircleDistortion(Node):
             self.initial_pose[1] = robot_pose.pose.position.y
             self.initial_pose[2] = robot_pose.pose.position.z   
             self.initial_phase = wrap_to_pi(np.arctan2(self.initial_pose[1], self.initial_pose[0]))   
-            # self.filter.pub_phase.publish(Float32(data=self.initial_phase))
             self.initial_radius = np.sqrt(self.initial_pose[0]**2 + self.initial_pose[1]**2)
+
+            # Adjusting filter parameters based on initial position
+            self.filter.pub_phase.publish(Float32(data=self.initial_phase))
             self.takeoff_traj(4)
             self.has_initial_pose = True    
             
