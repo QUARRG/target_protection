@@ -89,7 +89,7 @@ class CircleDistortion(Node):
         self.i_landing = 0
         self.i_takeoff = 0
 
-        self.phases = np.zeros(self.n_agents)
+        self.phases = np.zeros(3)  # [leader, ego, follower]
 
         self.state = 0
         # 0-take-off, 1-hover, 2-encirclement, 3-landing
@@ -332,6 +332,7 @@ class CircleDistortion(Node):
 
             # Adjusting filter parameters based on initial position
             self.filter_gps.radius = self.initial_radius + np.random.normal(0, 0.15)
+            self.filter_gps.s = np.log(self.filter_gps.radius)  # Keep s consistent with radius
             self.filter_gps.Rc = self.filter_gps.build_Rc(wrap_to_pi(self.initial_phase + np.random.normal(0, 0.1)))
             self.filter_gps.pub_phase.publish(Float32(data=self.initial_phase))
 

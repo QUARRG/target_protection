@@ -65,7 +65,7 @@ class CircleDistortion(Node):
         # Flags and variables
         self.timer_period = 1.0 / self.predict_hz
         self.initial_phase = 0.0
-        self.initial_radius = self.radius_nominal
+        self.initial_radius = self.radius_nominal  # Initialize with nominal value
         self.initial_pose = np.zeros(3)
         self.order = []
 
@@ -86,7 +86,7 @@ class CircleDistortion(Node):
         self.i_landing = 0
         self.i_takeoff = 0
 
-        self.phases = np.zeros(self.n_agents)
+        self.phases = np.zeros(3)  # [leader, ego, follower]
 
         self.state = 0
         # 0-take-off, 1-hover, 2-encirclement, 3-landing
@@ -121,10 +121,16 @@ class CircleDistortion(Node):
             10)    
 
         # Wait until order is received
-        while (not self.has_order): #and (self.initial_radius is None):
+        while (not self.has_order):
             rclpy.spin_once(self, timeout_sec=0.1)
 
-        # Create filter instance
+        # Wait until initial pose is received from Vicon
+        while (not self.has_initial_pose):
+            rclpy.spin_once(self, timeout_sec=0.1)
+        
+        self.info(f"Initial pose received: phase={self.initial_phase:.3f}, radius={self.initial_radius:.3f}")
+
+        # Create filter instance using actual measured initial values
         self.filter_params = {
             'P': P_list,
             'Q': Q_list,
@@ -139,6 +145,12 @@ class CircleDistortion(Node):
         # Create subscribers for the other agents' filtered phases
         self.create_subscription(Float32, f'/{self.leader}/filtered/phase',   self._phase_callback_leader, 1)
         self.create_subscription(Float32, f'/{self.follower}/filtered/phase', self._phase_callback_follower, 1)
+
+        # Wait until leader and follower phases are received
+        while (not self.has_phase_leader or not self.has_phase_follower):
+            rclpy.spin_once(self, timeout_sec=0.1)
+        
+        self.info(f"Leader and follower phases received: leader={self.phases[0]:.3f}, follower={self.phases[2]:.3f}")
 
         # Create subscriber for filter updates using the GPS measurements
         self.create_subscription(
@@ -177,25 +189,24 @@ class CircleDistortion(Node):
                 self.publish_phase_differences()
             
             # Encirclement state
-            elif self.state == 2: 
-                if self.has_phase_follower and self.has_phase_leader:
-                    # Computing desired phi_dot based on the leader and follower phases
-                    omega = phase_controller(self.phases[1], self.phases[0], self.phases[2], self.omega_nominal, self.k_phi)
-                    omega_msg = Float32()
-                    omega_msg.data = omega
-                    self.publish_omega.publish(omega_msg)
+            elif self.state == 2:
+                # Computing desired phi_dot based on the leader and follower phases
+                omega = phase_controller(self.phases[1], self.phases[0], self.phases[2], self.omega_nominal, self.k_phi)
+                omega_msg = Float32()
+                omega_msg.data = omega
+                self.publish_omega.publish(omega_msg)
 
-                    # Propagating the filter
-                    phase, current_position, desired_position = self.filter.predict(omega, self.timer_period)
+                # Propagating the filter (prediction step)
+                phase, current_position, desired_position = self.filter.predict(omega, self.timer_period)
 
-                    # Updating internal parameters
-                    self.phases[1] = phase.data
-                    self.publish_phase_differences()
+                # Updating internal parameters
+                self.phases[1] = phase.data
+                self.publish_phase_differences()
 
-                    target_r = np.array([desired_position.pose.position.x,
-                                         desired_position.pose.position.y,
-                                         desired_position.pose.position.z + self.hover_height])
-                    self.send_position(target_r)
+                target_r = np.array([desired_position.pose.position.x,
+                                     desired_position.pose.position.y,
+                                     desired_position.pose.position.z + self.hover_height])
+                self.send_position(target_r)
             
             # Landing state
             elif self.state == 3:
@@ -213,9 +224,10 @@ class CircleDistortion(Node):
             self.info('Exiting open loop command node')
     
     def update_callback(self, gps_pose: PoseStamped):
-        ''' Callback to update the filter with GPS measurements. '''
+        ''' Callback to update the filter with GPS measurements (update step). '''
         if self.state != 2:
             return  # Only update during encirclement state
+        
         y = np.array([gps_pose.pose.position.x,
                       gps_pose.pose.position.y,
                       gps_pose.pose.position.z]).reshape((3, 1))
@@ -264,14 +276,14 @@ class CircleDistortion(Node):
     def _phase_callback_leader(self, msg):
         ''' Callback to receive the filtered phase of the leader agent. '''
         self.has_phase_leader = True
-        if msg.data:
-            self.phases[0] = msg.data
+        # Update phase value (msg.data can be 0.0, which is a valid phase)
+        self.phases[0] = msg.data
 
     def _phase_callback_follower(self, msg):
         ''' Callback to receive the filtered phase of the follower agent. '''
         self.has_phase_follower = True
-        if msg.data:
-            self.phases[2] = msg.data
+        # Update phase value (msg.data can be 0.0, which is a valid phase)
+        self.phases[2] = msg.data
 
     def _order_callback(self, msg):
         ''' Callback to receive the order of agents. '''
