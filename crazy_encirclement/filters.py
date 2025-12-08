@@ -71,6 +71,47 @@ def orthonormalize(R: np.ndarray) -> np.ndarray:
     return U @ Vt
 
 
+def build_Rc(phase: float) -> np.ndarray:
+    """Build rotation matrix from phase angle.
+    
+    Args:
+        phase: Phase angle in radians
+    
+    Returns:
+        3x3 rotation matrix
+    """
+    phase = wrap_to_pi(phase)
+    c, s = np.cos(phase), np.sin(phase)
+    return np.array([[c, -s, 0],
+                     [s,  c, 0],
+                     [0,  0, 1]])
+
+
+def build_Re(embedding_func: Callable[[float], np.ndarray], phase: float) -> np.ndarray:
+    """Build embedding rotation matrix.
+    
+    Args:
+        embedding_func: Embedding function that takes phase and returns omega vector
+        phase: Phase angle in radians
+    
+    Returns:
+        3x3 rotation matrix
+    """
+    return exp_SO3(embedding_func(phase))
+
+
+def get_phase(Rc: np.ndarray) -> float:
+    """Extract phase angle from rotation matrix.
+    
+    Args:
+        Rc: 3x3 rotation matrix
+    
+    Returns:
+        Phase angle in radians, wrapped to [-pi, pi]
+    """
+    return wrap_to_pi(np.arctan2(Rc[1,0], Rc[0,0]))
+
+
 def phase_controller(phase_ego, phase_leader, phase_follower, omega_nominal, k_p=1.0):
     """
     A simple PD controller to adjust the phase angle of the ego vehicle
@@ -106,7 +147,7 @@ class BaseFilter:
         self.P: np.ndarray  = np.diag(np.square(self.params.get('P', np.zeros(4))))
         self.Q: np.ndarray  = np.diag(np.square(self.params.get('Q', np.zeros(4))))
         self.V: np.ndarray  = np.diag(np.square(self.params.get('V', np.zeros(3))))
-        self.Rc: np.ndarray = self.build_Rc(wrap_to_pi(self.params.get('phase_guess', 0.0)))
+        self.Rc: np.ndarray = build_Rc(wrap_to_pi(self.params.get('phase_guess', 0.0)))
         self.radius: float  = self.params.get('radius_guess', 2.0)
         self.radius_nominal: float = self.params.get('radius_nominal', 2.0)
         self.s: float = np.log(self.radius)
@@ -124,28 +165,14 @@ class BaseFilter:
         self.pub_radius: Node.Publisher = self.node.create_publisher(Float32, f'/{self.name}/filtered/radius', 10)
         self.node.info(f'Filter for agent {self.name} initialized with embedding function {embedding_fn_name}.')
 
-    def build_Rc(self, phase: float) -> np.ndarray:
-        # wrap phase to [-pi, pi]
-        phase = wrap_to_pi(phase)
-        c, s = np.cos(phase), np.sin(phase)
-        return np.array([[c, -s, 0],
-                         [s,  c, 0],
-                         [0,  0, 1]])
-
-    def build_Re(self, embedding_func: Callable[[float], np.ndarray], phase: float) -> np.ndarray:
-        return exp_SO3(embedding_func(phase))
-    
-    def get_phase(self, Rc: np.ndarray) -> float:
-        return wrap_to_pi(np.arctan2(Rc[1,0], Rc[0,0]))
-
     def build_pose_phase_msgs(self) -> list[PoseStamped, PoseStamped, Float32, Float32]:
         # Build PoseStamped and Float32 messages for current pose, phase and radius
         current_pose_msg = PoseStamped()
         current_pose_msg.header.frame_id = self.frame_id
         current_pose_msg.header.stamp = self.node.get_clock().now().to_msg()
-        phase: float = self.get_phase(self.Rc)
-        Re: np.ndarray = self.build_Re(self.embedding_fn, phase)
-        Rc: np.ndarray = self.build_Rc(phase)
+        phase: float = get_phase(self.Rc)
+        Re: np.ndarray = build_Re(self.embedding_fn, phase)
+        Rc: np.ndarray = build_Rc(phase)
         radius: float = np.exp(self.s)
         q: np.ndarray = (Re @ Rc @ (self.e_x * radius)).flatten()
         current_pose_msg.pose.position = Point(x=q[0], y=q[1], z=q[2])
@@ -173,7 +200,7 @@ class BaseFilter:
         
         # Predict the next covariance
         F = np.eye(4)
-        F[0:3, 0:3] = self.build_Rc(omega_z * dt)
+        F[0:3, 0:3] = build_Rc(omega_z * dt)
         Q = self.Q.copy()
         Q[3, 3] = ((Q[3, 3]**0.5) / np.exp(self.s)) ** 2
         self.P = F @ self.P @ F.T + Q * dt
@@ -198,7 +225,7 @@ class FilterGPS(BaseFilter):
     def update(self, y: np.ndarray):
         # Measurement Jacobian
         radius: float = np.exp(self.s)
-        Re: np.ndarray = self.build_Re(self.embedding_fn, self.get_phase(self.Rc))
+        Re: np.ndarray = build_Re(self.embedding_fn, get_phase(self.Rc))
         H_theta: np.ndarray = -self.Rc.T @ (Re @ self.Rc @ skew(self.e_x)) * radius    # body frame
         H_r: np.ndarray = (self.Rc.T @ (Re @ self.Rc @ self.e_x )) * radius            # inertial frame
         H: np.ndarray = np.hstack((H_theta, H_r))
@@ -254,7 +281,7 @@ class FilterRelative(BaseFilter):
         self.P: np.ndarray  = np.diag(np.square(self.params.get('P', np.zeros(3))))
         self.Q: np.ndarray  = np.diag(np.square(self.params.get('Q', np.zeros(3))))
         self.V: np.ndarray  = np.diag(np.square(self.params.get('V', np.zeros(3))))
-        self.Rc: np.ndarray = self.build_Rc(wrap_to_pi(self.params.get('phase_guess', 0.0)))
+        self.Rc: np.ndarray = build_Rc(wrap_to_pi(self.params.get('phase_guess', 0.0)))
         self.radius: float  = self.params.get('radius_guess', 2.0)
         self.radius_nominal: float = self.params.get('radius_nominal', 2.0)
         self.s: float = np.log(self.radius)
@@ -267,17 +294,17 @@ class FilterRelative(BaseFilter):
         # self.r = self.r  # constant radius
         
         # Predict the next covariance
-        F = self.build_Rc(omega_z * dt)
+        F = build_Rc(omega_z * dt)
         Q = self.Q.copy()
         self.P = F @ self.P @ F.T + Q * dt
         self.P = (self.P + self.P.T) / 2  # Ensure symmetry
 
-        return Float32(data=self.get_phase(self.Rc))
+        return Float32(data=get_phase(self.Rc))
 
     def update(self, y: np.ndarray, Rei: np.ndarray, Rci: np.ndarray, qi: np.ndarray):
         # Measurement Jacobian
         Rck = self.Rc.copy()
-        Rek = self.build_Re(self.embedding_fn, self.get_phase(Rck))
+        Rek = build_Re(self.embedding_fn, get_phase(Rck))
         H = -Rck.T @ Rci.T @ Rei.T @ Rek @ Rck @ skew(self.e_x * self.radius_nominal)
 
         # Kalman Gain
@@ -304,7 +331,7 @@ class FilterRelative(BaseFilter):
         self.P = I_KH @ self.P @ I_KH.T + K @ V @ K.T
         self.P = 0.5 * np.add(self.P, self.P.T)
         
-        return Float32(data=self.get_phase(self.Rc))
+        return Float32(data=get_phase(self.Rc))
 
 
 class BaselineFilter(BaseFilter):
@@ -329,7 +356,7 @@ class BaselineFilter(BaseFilter):
         self.radius_nominal: float = self.params.get('radius_nominal', 2.0)
 
         self.s: float = np.log(self.radius)
-        self.Rc: np.ndarray = self.build_Rc(wrap_to_pi(self.params.get('phase_guess', 0.0)))
+        self.Rc: np.ndarray = build_Rc(wrap_to_pi(self.params.get('phase_guess', 0.0)))
         self.dt : float = self.params.get('dt', 0.1)
         self.e_x: np.ndarray = np.asarray([[1.], [0.], [0.]])
 
@@ -342,7 +369,7 @@ class BaselineFilter(BaseFilter):
     
     def predict(self, current_pose: np.ndarray, phases: list[float]):
         prev_leader_phase, prev_ego_phase, prev_follower_phase = phases
-        Re = self.build_Re(self.embedding_fn, prev_ego_phase)
+        Re = build_Re(self.embedding_fn, prev_ego_phase)
         p = Re.T.dot(current_pose)
         curr_ego_phase = np.arctan2(p[1], p[0])
         curr_ego_radius = np.sqrt(p[0]**2 + p[1]**2)
