@@ -8,7 +8,7 @@ import warnings
 
 warnings.filterwarnings('ignore')
 
-plt.rcParams.update({'text.usetex': True, 'font.size': 20, 'figure.dpi': 300})
+plt.rcParams.update({'text.usetex': False, 'font.size': 20, 'figure.dpi': 300})
 
 # Configuration
 base_dir = Path('/home/paulo/Documents/DATA')
@@ -1096,41 +1096,33 @@ def plot_radius_errors_single_drone(drone='C05'):
                         print(f"  Skipping {csv_path.name}: no valid data")
                         continue
                     
-                    # Get position columns for this drone
-                    x_cols = [col for col in df.columns if drone in col and '_x' in col.lower() and source in col.lower()]
-                    y_cols = [col for col in df.columns if drone in col and '_y' in col.lower() and source in col.lower()]
+                    # Get radius column for this drone
+                    radius_cols = [col for col in df.columns if drone in col and 'radius' in col.lower() and source in col.lower()]
                     
                     # If not found with source, try without
-                    if len(x_cols) == 0:
-                        x_cols = [col for col in df.columns if drone in col and '_x' in col.lower()]
-                    if len(y_cols) == 0:
-                        y_cols = [col for col in df.columns if drone in col and '_y' in col.lower()]
+                    if len(radius_cols) == 0:
+                        radius_cols = [col for col in df.columns if drone in col and 'radius' in col.lower()]
                     
-                    if len(x_cols) == 0 or len(y_cols) == 0:
-                        print(f"  Skipping {csv_path.name}: missing position columns")
+                    if len(radius_cols) == 0:
+                        print(f"  Skipping {csv_path.name}: missing radius column")
                         continue
                     
-                    x_col = x_cols[0]
-                    y_col = y_cols[0]
+                    radius_col = radius_cols[0]
                     
                     # Get time column
                     timestamp_cols = [col for col in df.columns if 'time' in col.lower() or 'stamp' in col.lower()]
                     time_col = timestamp_cols[0] if len(timestamp_cols) > 0 else None
                     
                     # Get valid data
-                    valid_data = df[[time_col, x_col, y_col]].dropna()
+                    valid_data = df[[time_col, radius_col]].dropna()
                     
                     if len(valid_data) == 0:
                         print(f"  Skipping {csv_path.name}: insufficient valid data")
                         continue
                     
-                    # Extract time and positions
+                    # Extract time and radius
                     time_data = valid_data[time_col].values
-                    x_data = valid_data[x_col].values
-                    y_data = valid_data[y_col].values
-                    
-                    # Compute radius from center (assuming center at origin)
-                    radius_data = np.sqrt(x_data**2 + y_data**2)
+                    radius_data = valid_data[radius_col].values
                     
                     # Compute error (difference from nominal)
                     radius_error = radius_data - nominal_radius
@@ -1526,9 +1518,9 @@ if __name__ == '__main__':
         plot_radius_errors_single_drone(drone=drone)
     
     # Plot 3D trajectories for each drone across all experiments
-    for drone in drones:
-        print("\n" + "=" * 80)
-        print(f"PLOTTING 3D TRAJECTORIES FOR {drone} ACROSS EXPERIMENTS")
-        print("=" * 80)
-        plot_3d_trajectories_single_drone(drone=drone)
+    # for drone in drones:
+    #     print("\n" + "=" * 80)
+    #     print(f"PLOTTING 3D TRAJECTORIES FOR {drone} ACROSS EXPERIMENTS")
+    #     print("=" * 80)
+    #     plot_3d_trajectories_single_drone(drone=drone)
 
