@@ -8,7 +8,14 @@ from motion_capture_tracking_interfaces.msg import NamedPoseArray
 from std_msgs.msg import Bool
 from std_srvs.srv import Empty
 from std_msgs.msg import Float32
-from crazy_encirclement.filters import FilterGPS, FilterRelative, wrap_to_pi, phase_controller
+from crazy_encirclement.filters import (
+    build_Re,
+    get_phase,
+    FilterGPS,
+    FilterRelative,
+    wrap_to_pi,
+    phase_controller
+)
 
 
 class CircleDistortion(Node):
@@ -234,9 +241,9 @@ class CircleDistortion(Node):
             # Encirclement state
             elif self.state == 2:
                 # Computing desired phi_dot based on the leader and follower phases from filters
-                phase_ego = self.filter_gps.get_phase(self.filter_gps.Rc)
-                phase_leader = self.filter_relative_leader.get_phase(self.filter_relative_leader.Rc)
-                phase_follower = self.filter_relative_follower.get_phase(self.filter_relative_follower.Rc)
+                phase_ego = get_phase(self.filter_gps.Rc)
+                phase_leader = get_phase(self.filter_relative_leader.Rc)
+                phase_follower = get_phase(self.filter_relative_follower.Rc)
 
                 omega_ego = phase_controller(phase_ego, phase_leader, phase_follower, self.omega_nominal, k_p=self.k_phi)
                 omega_msg = Float32()
@@ -303,7 +310,7 @@ class CircleDistortion(Node):
         qi = np.asarray([current_position.pose.position.x,
                          current_position.pose.position.y,
                          current_position.pose.position.z]).reshape((3, 1))
-        Rei = self.filter_gps.build_Re(self.filter_gps.embedding_fn, phase_ego.data)
+        Rei = build_Re(self.filter_gps.embedding_fn, phase_ego.data)
         Rci = self.filter_gps.Rc
 
         rel_noise = np.random.multivariate_normal(np.zeros(3), np.diag(np.square(self.V_rel_list))).reshape((3,1))

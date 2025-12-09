@@ -150,7 +150,6 @@ class BaseFilter:
         self.Rc: np.ndarray = build_Rc(wrap_to_pi(self.params.get('phase_guess', 0.0)))
         self.radius: float  = self.params.get('radius_guess', 2.0)
         self.radius_nominal: float = self.params.get('radius_nominal', 2.0)
-        self.s: float = np.log(self.radius)
         self.e_x: np.ndarray = np.asarray([[1.], [0.], [0.]])
 
         # Checking embedding function
@@ -173,7 +172,7 @@ class BaseFilter:
         phase: float = get_phase(self.Rc)
         Re: np.ndarray = build_Re(self.embedding_fn, phase)
         Rc: np.ndarray = build_Rc(phase)
-        radius: float = np.exp(self.s)
+        radius: float = self.radius
         q: np.ndarray = (Re @ Rc @ (self.e_x * radius)).flatten()
         current_pose_msg.pose.position = Point(x=q[0], y=q[1], z=q[2])
         current_pose_msg.pose.orientation = Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
@@ -224,10 +223,10 @@ class FilterGPS(BaseFilter):
 
     def update(self, y: np.ndarray):
         # Measurement Jacobian
-        radius: float = np.exp(self.s)
+        radius: float = self.radius
         Re: np.ndarray = build_Re(self.embedding_fn, get_phase(self.Rc))
-        H_theta: np.ndarray = -self.Rc.T @ (Re @ self.Rc @ skew(self.e_x)) * radius    # body frame
-        H_r: np.ndarray = (self.Rc.T @ (Re @ self.Rc @ self.e_x )) * radius            # inertial frame
+        H_theta: np.ndarray = -self.Rc.T @ (Re @ self.Rc @ skew(self.e_x * radius ))   # body frame
+        H_r: np.ndarray = (self.Rc.T @ (Re @ self.Rc @ self.e_x ))                     # inertial frame
         H: np.ndarray = np.hstack((H_theta, H_r))
 
         # Kalman Gain
@@ -246,8 +245,7 @@ class FilterGPS(BaseFilter):
         theta_correction = exp_SO3(delta[0:3])    # Exponential map to group element
         self.Rc = theta_correction @ self.Rc      
         self.Rc = orthonormalize(self.Rc)
-        self.s += delta[3]
-        self.radius = float(np.exp(self.s)) 
+        self.radius += delta[3]
 
         # Update covariance
         I_KH = np.eye(4) - K @ H

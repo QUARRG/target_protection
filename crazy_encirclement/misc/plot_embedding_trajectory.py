@@ -17,7 +17,7 @@ from filters import (
     get_phase
 )
 
-plt.rcParams.update({'text.usetex': False, 'font.size': 14, 'figure.dpi': 150})
+plt.rcParams.update({'text.usetex': True, 'font.size': 20, 'figure.dpi': 150})
 # ----------------------------------------------------------------------
 
 
@@ -250,8 +250,8 @@ def plot_all_models_comparison(omega: float = 0.2, dt: float = 0.01, radius: flo
         ax.grid(True, alpha=0.3)
         ax.view_init(elev=20, azim=45)
     
-    plt.suptitle(f'Theoretical 3D Trajectories - All Models (ω = {omega} rad/s)', 
-                fontsize=16, fontweight='bold')
+    # plt.suptitle(f'Theoretical 3D Trajectories - All Models (ω = {omega} rad/s)', 
+    #             fontsize=16, fontweight='bold')
     plt.tight_layout()
     
     return fig
@@ -262,7 +262,7 @@ if __name__ == '__main__':
     # Example 1: Plot single model
     print("Plotting modelA trajectory...")
     fig1, ax1, traj1, phases1, times1 = plot_embedding_trajectory_3d(
-        model_name='modelC',
+        model_name='modelA',
         omega=0.2,
         dt=0.01,
         radius=1.0,
