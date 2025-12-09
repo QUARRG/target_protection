@@ -234,7 +234,7 @@ class CircleDistortion(Node):
         target_r = np.array([desired_position.pose.position.x,
                              desired_position.pose.position.y,
                              desired_position.pose.position.z + self.hover_height])
-        self.send_position(target_r)
+        # self.send_position(target_r)
 
     def _poses_changed(self, robot_pose: PoseStamped):
         """ Topic update callback to the motion capture lib's
