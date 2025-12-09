@@ -2,9 +2,9 @@
 FilterGPS:
   # Kalman filter parameters
   P: [0.0001, 0.0001, 0.25, 0.15]
-  Q: [0.0, 0.0, 0.001, 0.0]
+  Q: [0.0, 0.0, 0.005, 0.0]
   V: [0.1, 0.1, 0.1]
-  predict_hz: 10.0
+  predict_hz: 100.0
   update_hz: 10.0
   seed: 40
   # Parameters for circle distortion
@@ -13,7 +13,7 @@ FilterGPS:
   hover_height: 1.0  # meters
   radius_nominal: 1.0  # meters
   omega_nominal: 0.8   # radians per second
-  k_phi: 0.3
+  k_phi: 0.5
 
 FilterRelative:
   # Kalman filter parameters
