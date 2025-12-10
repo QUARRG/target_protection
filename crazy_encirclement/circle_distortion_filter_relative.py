@@ -259,9 +259,9 @@ class CircleDistortion(Node):
                 self.phases = [phase_leader.data, phase_ego.data, phase_follower.data]
                 self.publish_phase_differences()
 
-                target_r = np.array([desired_position_ego.pose.position.x,
-                                     desired_position_ego.pose.position.y,
-                                     desired_position_ego.pose.position.z + self.hover_height])
+                target_r = np.array([desired_position_ego.pose.pose.position.x,
+                                     desired_position_ego.pose.pose.position.y,
+                                     desired_position_ego.pose.pose.position.z + self.hover_height])
                 self.send_position(target_r)
             
             # Landing state
@@ -292,24 +292,24 @@ class CircleDistortion(Node):
         for pose in gps_scanner_poses.poses:
             if pose.name == self.robot:
                 y_gps = np.array([pose.pose.position.x,
-                              pose.pose.position.y,
-                              pose.pose.position.z]).reshape((3, 1))
-            elif pose.name == self.leader:
-                y_rel_leader = np.array([pose.pose.position.x,
                                   pose.pose.position.y,
                                   pose.pose.position.z]).reshape((3, 1))
+            elif pose.name == self.leader:
+                y_rel_leader = np.array([pose.pose.position.x,
+                                         pose.pose.position.y,
+                                         pose.pose.position.z]).reshape((3, 1))
             elif pose.name == self.follower:
                 y_rel_follower = np.array([pose.pose.position.x,
-                                    pose.pose.position.y,
-                                    pose.pose.position.z]).reshape((3, 1))
+                                           pose.pose.position.y,
+                                           pose.pose.position.z]).reshape((3, 1))
         
         # Updating GPS filter
         phase_ego, current_position, desired_position = self.filter_gps.update(y_gps)
 
         # Updating Relative filters
-        qi = np.asarray([current_position.pose.position.x,
-                         current_position.pose.position.y,
-                         current_position.pose.position.z]).reshape((3, 1))
+        qi = np.asarray([current_position.pose.pose.position.x,
+                         current_position.pose.pose.position.y,
+                         current_position.pose.pose.position.z]).reshape((3, 1))
         Rei = build_Re(self.filter_gps.embedding_fn, phase_ego.data)
         Rci = self.filter_gps.Rc
 
@@ -325,10 +325,10 @@ class CircleDistortion(Node):
         self.phases = [phase_leader.data, phase_ego.data, phase_follower.data]
         self.publish_phase_differences()
 
-        target_r = np.array([desired_position.pose.position.x,
-                             desired_position.pose.position.y,
-                             desired_position.pose.position.z + self.hover_height])
-        self.send_position(target_r)
+        # target_r = np.array([desired_position.pose.pose.position.x,
+        #                      desired_position.pose.pose.position.y,
+        #                      desired_position.pose.pose.position.z + self.hover_height])
+        # self.send_position(target_r)
 
     def _poses_changed(self, robot_pose: PoseStamped):
         """ Topic update callback to the motion capture lib's
@@ -382,7 +382,7 @@ class CircleDistortion(Node):
             self.has_follower_initial_pose = True
             self.info(f"Follower initial phase: {self.follower_initial_phase:.3f}, radius: {self.follower_initial_radius:.3f}")
 
-    def _order_callback(self, msg):
+    def _order_callback(self, msg: StringArray):
         ''' Callback to receive the order of agents. '''
         if not self.has_order:
             # self.info(f"Phase received: {msg.data}")

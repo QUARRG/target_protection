@@ -170,9 +170,9 @@ class CircleDistortion(Node):
                     self.publish_phase_differences()
 
                     # Sending position command
-                    target_r = np.array([position.pose.position.x,
-                                         position.pose.position.y,
-                                         position.pose.position.z + self.hover_height])
+                    target_r = np.array([position.pose.pose.position.x,
+                                         position.pose.pose.position.y,
+                                         position.pose.pose.position.z + self.hover_height])
                     self.send_position(target_r)
 
                 else:
@@ -225,19 +225,19 @@ class CircleDistortion(Node):
             self.landing_traj(3)
             self.has_final = True
 
-    def _phase_callback_leader(self, msg):
+    def _phase_callback_leader(self, msg: Float32):
         ''' Callback to receive the filtered phase of the leader agent. '''
         self.has_phase_leader = True
         if msg.data:
             self.phases[0] = msg.data
 
-    def _phase_callback_follower(self, msg):
+    def _phase_callback_follower(self, msg: Float32):
         ''' Callback to receive the filtered phase of the follower agent. '''
         self.has_phase_follower = True
         if msg.data:
             self.phases[2] = msg.data
 
-    def _order_callback(self, msg):
+    def _order_callback(self, msg: StringArray):
         ''' Callback to receive the order of agents. '''
         if not self.has_order:
             # self.info(f"Phase received: {msg.data}")

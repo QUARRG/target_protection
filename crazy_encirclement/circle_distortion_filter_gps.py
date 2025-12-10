@@ -197,9 +197,9 @@ class CircleDistortion(Node):
                 self.phases[1] = phase.data
                 self.publish_phase_differences()
 
-                target_r = np.array([desired_position.pose.position.x,
-                                     desired_position.pose.position.y,
-                                     desired_position.pose.position.z + self.hover_height])
+                target_r = np.array([desired_position.pose.pose.position.x,
+                                     desired_position.pose.pose.position.y,
+                                     desired_position.pose.pose.position.z + self.hover_height])
                 self.send_position(target_r)
             
             # Landing state
@@ -231,9 +231,9 @@ class CircleDistortion(Node):
         self.phases[1] = phase.data
         self.publish_phase_differences()
 
-        target_r = np.array([desired_position.pose.position.x,
-                             desired_position.pose.position.y,
-                             desired_position.pose.position.z + self.hover_height])
+        # target_r = np.array([desired_position.pose.pose.position.x,
+        #                      desired_position.pose.pose.position.y,
+        #                      desired_position.pose.pose.position.z + self.hover_height])
         # self.send_position(target_r)
 
     def _poses_changed(self, robot_pose: PoseStamped):
@@ -270,19 +270,19 @@ class CircleDistortion(Node):
             self.landing_traj(5)
             self.has_final = True
 
-    def _phase_callback_leader(self, msg):
+    def _phase_callback_leader(self, msg: Float32):
         ''' Callback to receive the filtered phase of the leader agent. '''
         self.has_phase_leader = True
         # Update phase value (msg.data can be 0.0, which is a valid phase)
         self.phases[0] = msg.data
 
-    def _phase_callback_follower(self, msg):
+    def _phase_callback_follower(self, msg: Float32):
         ''' Callback to receive the filtered phase of the follower agent. '''
         self.has_phase_follower = True
         # Update phase value (msg.data can be 0.0, which is a valid phase)
         self.phases[2] = msg.data
 
-    def _order_callback(self, msg):
+    def _order_callback(self, msg: StringArray):
         ''' Callback to receive the order of agents. '''
         if not self.has_order:
             # self.info(f"Phase received: {msg.data}")

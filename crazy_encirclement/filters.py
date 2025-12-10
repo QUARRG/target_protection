@@ -2,7 +2,7 @@ import numpy as np
 from rclpy.node import Node
 from typing import Callable
 from std_msgs.msg import Float32
-from geometry_msgs.msg import PoseStamped, Point, Quaternion
+from geometry_msgs.msg import PoseStamped, Point, Quaternion, PoseWithCovarianceStamped, PoseWithCovariance
 from scipy.linalg import expm
 
 
@@ -159,14 +159,14 @@ class BaseFilter:
 
         # Publishers
         self.frame_id: str = self.params.get('frame_id', 'world')
-        self.pub_pose: Node.Publisher   = self.node.create_publisher(PoseStamped, f'/{self.name}/filtered/pose', 10)
+        self.pub_pose: Node.Publisher   = self.node.create_publisher(PoseWithCovarianceStamped, f'/{self.name}/filtered/pose', 10)
         self.pub_phase: Node.Publisher  = self.node.create_publisher(Float32, f'/{self.name}/filtered/phase', 10)
         self.pub_radius: Node.Publisher = self.node.create_publisher(Float32, f'/{self.name}/filtered/radius', 10)
         self.node.info(f'Filter for agent {self.name} initialized with embedding function {embedding_fn_name}.')
 
-    def build_pose_phase_msgs(self) -> list[PoseStamped, PoseStamped, Float32, Float32]:
+    def build_pose_phase_msgs(self) -> list[PoseWithCovarianceStamped, PoseStamped, Float32, Float32]:
         # Build PoseStamped and Float32 messages for current pose, phase and radius
-        current_pose_msg = PoseStamped()
+        current_pose_msg = PoseWithCovarianceStamped()
         current_pose_msg.header.frame_id = self.frame_id
         current_pose_msg.header.stamp = self.node.get_clock().now().to_msg()
         phase: float = get_phase(self.Rc)
@@ -174,8 +174,14 @@ class BaseFilter:
         Rc: np.ndarray = build_Rc(phase)
         radius: float = self.radius
         q: np.ndarray = (Re @ Rc @ (self.e_x * radius)).flatten()
-        current_pose_msg.pose.position = Point(x=q[0], y=q[1], z=q[2])
-        current_pose_msg.pose.orientation = Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+        current_pose_msg.pose.pose.position = Point(x=q[0], y=q[1], z=q[2])
+        current_pose_msg.pose.pose.orientation = Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+        # Fill covariance veryfing the size of P diagonal
+        P_array = self.P.diagonal()
+        if len(P_array) == 4:
+            current_pose_msg.pose.covariance = [P_array[3], 0., 0., P_array[0], P_array[1], P_array[2]]
+        elif len(P_array) == 3:
+            current_pose_msg.pose.covariance = [0., 0., 0., P_array[0], P_array[1], P_array[2]]
         phase_msg = Float32()
         phase_msg.data = phase
         radius_msg = Float32()
@@ -254,9 +260,9 @@ class FilterGPS(BaseFilter):
 
         # Publish updated pose and phase
         current_pose_msg, desired_pose_msg, phase_msg, radius_msg = self.build_pose_phase_msgs()
-        self.pub_pose.publish(current_pose_msg)
-        self.pub_phase.publish(phase_msg)
-        self.pub_radius.publish(radius_msg)
+        # self.pub_pose.publish(current_pose_msg)
+        # self.pub_phase.publish(phase_msg)
+        # self.pub_radius.publish(radius_msg)
 
         return phase_msg, current_pose_msg, desired_pose_msg
 
@@ -360,7 +366,7 @@ class BaselineFilter(BaseFilter):
 
         # Publishers
         self.pub_omega  = self.node.create_publisher(Float32, f'/{self.name}/baseline/omega', 10)
-        self.pub_pose   = self.node.create_publisher(PoseStamped, f'/{self.name}/baseline/pose', 10)
+        self.pub_pose   = self.node.create_publisher(PoseWithCovarianceStamped, f'/{self.name}/baseline/pose', 10)
         self.pub_phase  = self.node.create_publisher(Float32, f'/{self.name}/baseline/phase', 10)
         self.pub_radius = self.node.create_publisher(Float32, f'/{self.name}/baseline/radius', 10)
         self.node.info(f'Baseline filter for agent {self.name} initialized.')
