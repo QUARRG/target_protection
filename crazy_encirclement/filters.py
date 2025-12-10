@@ -179,9 +179,15 @@ class BaseFilter:
         # Fill covariance veryfing the size of P diagonal
         P_array = self.P.diagonal()
         if len(P_array) == 4:
-            current_pose_msg.pose.covariance = [P_array[3], 0., 0., P_array[0], P_array[1], P_array[2]]
+            cov = np.zeros((6,6))
+            cov[0, 0:6] = self.P[3, 0:6]
+            cov[0:6, 0] = self.P[0:6, 3]
+            cov[3:6, 3:6] = self.P[0:3, 0:3]
+            current_pose_msg.pose.covariance = cov.flatten().tolist()
         elif len(P_array) == 3:
-            current_pose_msg.pose.covariance = [0., 0., 0., P_array[0], P_array[1], P_array[2]]
+            cov = np.zeros((6,6))
+            cov[3:6, 3:6] = self.P[0:3, 0:3]
+            current_pose_msg.pose.covariance = cov.flatten().tolist()
         phase_msg = Float32()
         phase_msg.data = phase
         radius_msg = Float32()
