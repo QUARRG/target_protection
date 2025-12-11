@@ -177,17 +177,20 @@ class BaseFilter:
         current_pose_msg.pose.pose.position = Point(x=q[0], y=q[1], z=q[2])
         current_pose_msg.pose.pose.orientation = Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
         # Fill covariance veryfing the size of P diagonal
-        P_array = self.P.diagonal()
-        if len(P_array) == 4:
-            cov = np.zeros((6,6))
-            cov[0, 0:6] = self.P[3, 0:6]
-            cov[0:6, 0] = self.P[0:6, 3]
-            cov[3:6, 3:6] = self.P[0:3, 0:3]
-            current_pose_msg.pose.covariance = cov.flatten().tolist()
-        elif len(P_array) == 3:
-            cov = np.zeros((6,6))
-            cov[3:6, 3:6] = self.P[0:3, 0:3]
-            current_pose_msg.pose.covariance = cov.flatten().tolist()
+        if hasattr(self, 'P'):
+            if len(self.P.diagonal()) == 4:
+                cov = np.zeros((6,6))
+                cov[0, 0] = self.P[3, 3]
+                cov[3:6, 0] = self.P[0:3, 3]
+                cov[0, 3:6] = self.P[3, 0:3]
+                cov[3:6, 3:6] = self.P[0:3, 0:3]
+                current_pose_msg.pose.covariance = cov.flatten().tolist()
+            elif len(self.P.diagonal()) == 3:
+                cov = np.zeros((6,6))
+                cov[3:6, 3:6] = self.P[0:3, 0:3]
+                current_pose_msg.pose.covariance = cov.flatten().tolist()
+        else:
+            current_pose_msg.pose.covariance = np.zeros(36).tolist()
         phase_msg = Float32()
         phase_msg.data = phase
         radius_msg = Float32()
