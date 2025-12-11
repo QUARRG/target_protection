@@ -17,7 +17,7 @@ from filters import (
     get_phase
 )
 
-plt.rcParams.update({'text.usetex': True, 'font.size': 20, 'figure.dpi': 150})
+plt.rcParams.update({'text.usetex': True, 'font.size': 24, 'figure.dpi': 150})
 # ----------------------------------------------------------------------
 
 
@@ -112,7 +112,7 @@ def plot_embedding_trajectory_3d(model_name: str, omega: float = 0.2, dt: float 
     if show_phase_color:
         # Color by phase
         scatter = ax.scatter(trajectory[:, 0], trajectory[:, 1], trajectory[:, 2],
-                           c=np.degrees(phases), cmap='hsv', s=2, alpha=0.8)
+                           c=np.degrees(phases), cmap='hsv', s=20, alpha=0.8)
         cbar = plt.colorbar(scatter, ax=ax, pad=0.02, shrink=0.8)
         cbar.ax.set_title('Phase (deg)', pad=10)
     else:
@@ -158,18 +158,18 @@ def plot_embedding_trajectory_3d(model_name: str, omega: float = 0.2, dt: float 
         # XY plane projection - at minimum z limit
         ax.plot(trajectory[:, 0], trajectory[:, 1], 
                np.full_like(trajectory[:, 0], z_min_limit),
-               'gray', alpha=0.3, linewidth=2)
+               'gray', alpha=0.3, linewidth=4)
         
         # XZ plane projection - at minimum y limit
         ax.plot(trajectory[:, 0], 
                np.full_like(trajectory[:, 1], y_min_limit),
                trajectory[:, 2],
-               'gray', alpha=0.3, linewidth=2)
+               'gray', alpha=0.3, linewidth=4)
         
         # YZ plane projection - at minimum x limit
         ax.plot(np.full_like(trajectory[:, 0], x_min_limit),
                trajectory[:, 1], trajectory[:, 2],
-               'gray', alpha=0.3, linewidth=2)
+               'gray', alpha=0.3, linewidth=4)
     
     # Set limits to include z=0 for ground plane projection
     ax.set_xlim(mid_x - max_range - margin, mid_x + max_range + margin)
@@ -262,7 +262,7 @@ if __name__ == '__main__':
     # Example 1: Plot single model
     print("Plotting modelA trajectory...")
     fig1, ax1, traj1, phases1, times1 = plot_embedding_trajectory_3d(
-        model_name='modelA',
+        model_name='modelC',
         omega=0.2,
         dt=0.01,
         radius=1.0,
