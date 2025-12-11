@@ -380,12 +380,11 @@ class BaselineFilter(BaseFilter):
     def predict(self, current_pose: np.ndarray, phases: list[float]):
         prev_leader_phase, prev_ego_phase, prev_follower_phase = phases
         Re = build_Re(self.embedding_fn, prev_ego_phase)
-        p = Re.T.dot(current_pose)
-        curr_ego_phase = np.arctan2(p[1], p[0])
-        curr_ego_radius = np.sqrt(p[0]**2 + p[1]**2)
-        self.s = np.log(curr_ego_radius)
-        self.radius = curr_ego_radius
-        omega = phase_controller(curr_ego_phase, prev_leader_phase, prev_follower_phase, self.omega_nominal, self.k_phi)
+        Rc = build_Rc(prev_ego_phase)
+        p = Rc.T @ Re.T @ current_pose
+        # curr_ego_phase = np.arctan2(p[1], p[0])
+        self.radius  = np.sqrt(p[0]**2 + p[1]**2 + p[2]**2)
+        omega = phase_controller(prev_ego_phase, prev_leader_phase, prev_follower_phase, self.omega_nominal, self.k_phi)
         # Update phase
         self.Rc = exp_SO3(np.asarray([0., 0., omega * self.dt])) @ self.Rc
         self.Rc = orthonormalize(self.Rc)
