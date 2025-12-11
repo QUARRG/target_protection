@@ -11,7 +11,9 @@ warnings.filterwarnings('ignore')
 plt.rcParams.update({'text.usetex': False, 'font.size': 20, 'figure.dpi': 300})
 
 # Configuration
-base_dir = Path('/home/paulo/Documents/DATA')
+base_dir = Path('/home/paulo/Documents/DATA_NEW/')
+plots_dir = base_dir / 'plots'
+plots_dir.mkdir(exist_ok=True)
 groups = ['baseline', 'gps', 'relative']
 models = ['modelA', 'modelC']
 speeds = ['0_2', '0_4', '0_6', '0_8']
@@ -37,8 +39,8 @@ DRONE_RELATIONSHIPS = {
 def find_csv_files(group, model, speed):
     """
     Find CSV files for a given group, model, and speed.
-    For baseline: expects 1 CSV file
-    For gps/relative: expects 5 CSV files (with seed numbers)
+    New structure: base_dir / group / model / speed / seed_XX / *.csv
+    Seed folders are: seed_40, seed_45, seed_50, seed_55, seed_60
     """
     search_path = base_dir / group / model / speed
     
@@ -46,10 +48,17 @@ def find_csv_files(group, model, speed):
         print(f"Warning: Path does not exist: {search_path}")
         return []
     
-    csv_files = list(search_path.glob('*.csv'))
+    # Find all seed folders and their CSV files
+    csv_files = []
+    seed_folders = [f"seed_{s}" for s in [40, 45, 50, 55, 60]]
+    
+    for seed_folder in seed_folders:
+        seed_path = search_path / seed_folder
+        if seed_path.exists():
+            csv_files.extend(list(seed_path.glob('*.csv')))
     
     if len(csv_files) == 0:
-        print(f"Warning: No CSV files found in {search_path}")
+        print(f"Warning: No CSV files found in {search_path}/seed_*")
     
     return sorted(csv_files)
 
@@ -195,59 +204,30 @@ def plot_phase_differences():
                         print(f"  Skipping {csv_path.name}: no valid data")
                         continue
                     
-                    # Get phase columns for ego, follower, and leader
-                    ego_phase_col = get_phase_column(df, drone, source)
-                    follower_phase_col = get_phase_column(df, follower, source)
-                    leader_phase_col = get_phase_column(df, leader, source)
+                    # Get phase_diff columns (already computed in the data)
+                    phase_diff_follower_cols = [col for col in df.columns if drone in col and 'phase_diff' in col.lower() and 'follower' in col.lower() and source in col.lower()]
+                    phase_diff_leader_cols = [col for col in df.columns if drone in col and 'phase_diff' in col.lower() and 'leader' in col.lower() and source in col.lower()]
                     
-                    if ego_phase_col is None or follower_phase_col is None or leader_phase_col is None:
-                        print(f"  Skipping {csv_path.name}: missing phase columns")
+                    # If not found with source, try without
+                    if len(phase_diff_follower_cols) == 0:
+                        phase_diff_follower_cols = [col for col in df.columns if drone in col and 'phase_diff' in col.lower() and 'follower' in col.lower()]
+                    if len(phase_diff_leader_cols) == 0:
+                        phase_diff_leader_cols = [col for col in df.columns if drone in col and 'phase_diff' in col.lower() and 'leader' in col.lower()]
+                    
+                    if len(phase_diff_follower_cols) == 0 or len(phase_diff_leader_cols) == 0:
+                        print(f"  Skipping {csv_path.name}: missing phase_diff columns")
                         continue
+                    
+                    phase_diff_follower_col = phase_diff_follower_cols[0]
+                    phase_diff_leader_col = phase_diff_leader_cols[0]
                     
                     # Get time column
                     timestamp_cols = [col for col in df.columns if 'time' in col.lower() or 'stamp' in col.lower()]
                     time_col = timestamp_cols[0] if len(timestamp_cols) > 0 else None
-                                       
-                    # Get valid data for each drone separately (data may not be synced)
-                    ego_valid = df[[time_col, ego_phase_col]].dropna()
-                    follower_valid = df[[time_col, follower_phase_col]].dropna()
-                    leader_valid = df[[time_col, leader_phase_col]].dropna()
                     
-                    if len(ego_valid) == 0 or len(follower_valid) == 0 or len(leader_valid) == 0:
-                        print(f"  Skipping {csv_path.name}: insufficient valid data")
-                        continue
-
-                    total_length = min(len(ego_valid), len(follower_valid), len(leader_valid))
-                    
-                    # Extract time and phase for each drone
-                    time_ego = ego_valid[time_col].values
-                    time_ego = time_ego[:total_length]
-                    phase_ego = ego_valid[ego_phase_col].values
-                    phase_ego = phase_ego[:total_length]
-                    
-                    time_follower = follower_valid[time_col].values
-                    time_follower = time_follower[:total_length]
-                    phase_follower = follower_valid[follower_phase_col].values
-                    phase_follower = phase_follower[:total_length]
-                    
-                    time_leader = leader_valid[time_col].values
-                    time_leader = time_leader[:total_length]
-                    phase_leader = leader_valid[leader_phase_col].values
-                    phase_leader = phase_leader[:total_length]
-                    
-                    # # Use ego drone's timeline as reference
-                    time_reference = time_ego
-
-                    # Compute phase differences using unit vector method (from smoothed phases)
-                    phi_diff_follower = np.array([
-                        compute_phase_diff_unit_vector(phase_ego[k], phase_follower[k])
-                        for k in range(len(phase_ego))
-                    ])
-                    
-                    phi_diff_leader = np.array([
-                        compute_phase_diff_unit_vector(phase_ego[k], phase_leader[k])
-                        for k in range(len(phase_ego))
-                    ])
+                    # Extract time and phase differences (already in degrees)
+                    phi_diff_follower = np.abs(np.rad2deg(df[[time_col, phase_diff_follower_col]].dropna().values))
+                    phi_diff_leader = np.abs(np.rad2deg(df[[time_col, phase_diff_leader_col]].dropna().values))
                     
                     # Plot phase differences
                     # Red for follower, blue for leader
@@ -255,14 +235,14 @@ def plot_phase_differences():
                     label_follower = f'to Follower ({follower})' if csv_idx == 0 else None
                     label_leader = f'to Leader ({leader})' if csv_idx == 0 else None
                     
-                    ax.plot(time_reference, phi_diff_follower, 'r-', linewidth=1.0, 
+                    ax.plot(phi_diff_follower[:,0], phi_diff_follower[:,1], 'r-', linewidth=1.0, 
                            alpha=alpha, label=label_follower, zorder=2)
-                    ax.plot(time_reference, phi_diff_leader, 'b-', linewidth=1.0, 
+                    ax.plot(phi_diff_leader[:,0], phi_diff_leader[:,1], 'b-', linewidth=1.0, 
                            alpha=alpha, label=label_leader, zorder=2)
                 
                 # Configure plot
                 ax.grid(True, alpha=0.3, linestyle=':')
-                ax.set_ylim(75, 165)
+                # ax.set_ylim(75, 165)
                 
                 # Labels
                 if i == 0:
@@ -292,7 +272,7 @@ def plot_phase_differences():
     plt.tight_layout()
     
     # Save figure
-    output_path = base_dir / 'phase_differences_gps_montage.png'
+    output_path = plots_dir / 'phase_differences_gps_montage.png'
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
     print(f"\nPlot saved to: {output_path}")
     
@@ -355,59 +335,39 @@ def plot_phase_errors():
                         print(f"  Skipping {csv_path.name}: no valid data")
                         continue
                     
-                    # Get phase columns for ego, follower, and leader
-                    ego_phase_col = get_phase_column(df, drone, source)
-                    follower_phase_col = get_phase_column(df, follower, source)
-                    leader_phase_col = get_phase_column(df, leader, source)
+                    # Get phase_diff columns (already computed in the data)
+                    phase_diff_follower_cols = [col for col in df.columns if drone in col and 'phase_diff' in col.lower() and 'follower' in col.lower() and source in col.lower()]
+                    phase_diff_leader_cols = [col for col in df.columns if drone in col and 'phase_diff' in col.lower() and 'leader' in col.lower() and source in col.lower()]
                     
-                    if ego_phase_col is None or follower_phase_col is None or leader_phase_col is None:
-                        print(f"  Skipping {csv_path.name}: missing phase columns")
+                    # If not found with source, try without
+                    if len(phase_diff_follower_cols) == 0:
+                        phase_diff_follower_cols = [col for col in df.columns if drone in col and 'phase_diff' in col.lower() and 'follower' in col.lower()]
+                    if len(phase_diff_leader_cols) == 0:
+                        phase_diff_leader_cols = [col for col in df.columns if drone in col and 'phase_diff' in col.lower() and 'leader' in col.lower()]
+                    
+                    if len(phase_diff_follower_cols) == 0 or len(phase_diff_leader_cols) == 0:
+                        print(f"  Skipping {csv_path.name}: missing phase_diff columns")
                         continue
+                    
+                    phase_diff_follower_col = phase_diff_follower_cols[0]
+                    phase_diff_leader_col = phase_diff_leader_cols[0]
                     
                     # Get time column
                     timestamp_cols = [col for col in df.columns if 'time' in col.lower() or 'stamp' in col.lower()]
                     time_col = timestamp_cols[0] if len(timestamp_cols) > 0 else None
-                    
-                    # Get valid data for each drone separately (data may not be synced)
-                    ego_valid = df[[time_col, ego_phase_col]].dropna()
-                    follower_valid = df[[time_col, follower_phase_col]].dropna()
-                    leader_valid = df[[time_col, leader_phase_col]].dropna()
-                    
-                    if len(ego_valid) == 0 or len(follower_valid) == 0 or len(leader_valid) == 0:
-                        print(f"  Skipping {csv_path.name}: insufficient valid data")
-                        continue
 
-                    total_length = min(len(ego_valid), len(follower_valid), len(leader_valid))
-                    
-                    # Extract time and phase for each drone
-                    time_ego = ego_valid[time_col].values[:total_length]
-                    phase_ego = ego_valid[ego_phase_col].values[:total_length]
-                    
-                    time_follower = follower_valid[time_col].values[:total_length]
-                    phase_follower = follower_valid[follower_phase_col].values[:total_length]
-                    
-                    time_leader = leader_valid[time_col].values[:total_length]
-                    phase_leader = leader_valid[leader_phase_col].values[:total_length]
-                    
-                    # Compute phase differences using unit vector method (from smoothed phases)
-                    phi_diff_follower = np.array([
-                        compute_phase_diff_unit_vector(phase_ego[k], phase_follower[k])
-                        for k in range(len(phase_ego))
-                    ])
-                    
-                    phi_diff_leader = np.array([
-                        compute_phase_diff_unit_vector(phase_ego[k], phase_leader[k])
-                        for k in range(len(phase_ego))
-                    ])
+                    # Extract time and phase differences (already in degrees)
+                    phi_diff_follower = df[[time_col, phase_diff_follower_col]].dropna().values
+                    phi_diff_leader = df[[time_col, phase_diff_leader_col]].dropna().values
                     
                     # Compute errors (difference from theoretical 120°)
-                    error_follower = phi_diff_follower - theoretical_phase
-                    error_leader = phi_diff_leader - theoretical_phase
+                    error_follower = phi_diff_follower[:, 1] - theoretical_phase
+                    error_leader = phi_diff_leader[:, 1] - theoretical_phase
                     
                     # Store errors and time
                     errors_follower_all.append(error_follower)
                     errors_leader_all.append(error_leader)
-                    time_references.append(time_ego)
+                    time_references.append(phi_diff_follower[:, 0])
                 
                 # If we have data from multiple runs, compute statistics
                 if len(errors_follower_all) > 0:                    
@@ -466,60 +426,38 @@ def plot_phase_errors():
                     df_baseline = load_and_crop_csv(baseline_csv)
                     
                     if df_baseline is not None and len(df_baseline) > 0:
-                        # Get phase columns for ego, follower, and leader from baseline
-                        ego_phase_col_base = get_phase_column(df_baseline, drone, 'baseline')
-                        follower_phase_col_base = get_phase_column(df_baseline, follower, 'baseline')
-                        leader_phase_col_base = get_phase_column(df_baseline, leader, 'baseline')
+                        # Get phase_diff columns from baseline
+                        phase_diff_follower_cols_base = [col for col in df_baseline.columns if drone in col and 'phase_diff' in col.lower() and 'follower' in col.lower()]
+                        phase_diff_leader_cols_base = [col for col in df_baseline.columns if drone in col and 'phase_diff' in col.lower() and 'leader' in col.lower()]
                         
-                        # If 'baseline' source not found, try without source specification
-                        if ego_phase_col_base is None:
-                            ego_phase_col_base = get_phase_column(df_baseline, drone, '')
-                        if follower_phase_col_base is None:
-                            follower_phase_col_base = get_phase_column(df_baseline, follower, '')
-                        if leader_phase_col_base is None:
-                            leader_phase_col_base = get_phase_column(df_baseline, leader, '')
-                        
-                        if ego_phase_col_base is not None and follower_phase_col_base is not None and leader_phase_col_base is not None:
+                        if len(phase_diff_follower_cols_base) > 0 and len(phase_diff_leader_cols_base) > 0:
+                            phase_diff_follower_col_base = phase_diff_follower_cols_base[0]
+                            phase_diff_leader_col_base = phase_diff_leader_cols_base[0]
+                            
                             # Get time column
                             timestamp_cols = [col for col in df_baseline.columns if 'time' in col.lower() or 'stamp' in col.lower()]
                             time_col_base = timestamp_cols[0] if len(timestamp_cols) > 0 else None
                             
                             # Get valid data
-                            ego_valid_base = df_baseline[[time_col_base, ego_phase_col_base]].dropna()
-                            follower_valid_base = df_baseline[[time_col_base, follower_phase_col_base]].dropna()
-                            leader_valid_base = df_baseline[[time_col_base, leader_phase_col_base]].dropna()
+                            valid_data_base = df_baseline[[time_col_base, phase_diff_follower_col_base, phase_diff_leader_col_base]].dropna()
                             
-                            total_length_base = min(len(ego_valid_base), len(follower_valid_base), len(leader_valid_base))
-                            
-                            if total_length_base > 0:
-                                # Extract time and phase
-                                time_ego_base = ego_valid_base[time_col_base].values[:total_length_base]
-                                phase_ego_base = ego_valid_base[ego_phase_col_base].values[:total_length_base]
-                                phase_follower_base = follower_valid_base[follower_phase_col_base].values[:total_length_base]
-                                phase_leader_base = leader_valid_base[leader_phase_col_base].values[:total_length_base]
-                                
-                                # Compute phase differences
-                                phi_diff_follower_base = np.array([
-                                    compute_phase_diff_unit_vector(phase_ego_base[k], phase_follower_base[k])
-                                    for k in range(len(phase_ego_base))
-                                ])
-                                
-                                phi_diff_leader_base = np.array([
-                                    compute_phase_diff_unit_vector(phase_ego_base[k], phase_leader_base[k])
-                                    for k in range(len(phase_ego_base))
-                                ])
+                            if len(valid_data_base) > 0:
+                                # Extract time and phase differences (convert from radians to degrees)
+                                time_base = valid_data_base[time_col_base].values
+                                phi_diff_follower_base = np.rad2deg(valid_data_base[phase_diff_follower_col_base].values)
+                                phi_diff_leader_base = np.rad2deg(valid_data_base[phase_diff_leader_col_base].values)
                                 
                                 # Compute errors
                                 error_follower_base = phi_diff_follower_base - theoretical_phase
                                 error_leader_base = phi_diff_leader_base - theoretical_phase
                                 
                                 # Plot baseline as dashed lines
-                                ax.plot(time_ego_base, error_follower_base, 'r--', linewidth=2.5, 
+                                ax.plot(time_base, error_follower_base, 'r--', linewidth=2.5, 
                                        label='Baseline to Follower', alpha=0.9, zorder=4)
-                                ax.plot(time_ego_base, error_leader_base, 'b--', linewidth=2.5, 
+                                ax.plot(time_base, error_leader_base, 'b--', linewidth=2.5, 
                                        label='Baseline to Leader', alpha=0.9, zorder=4)
                         else:
-                            print(f"    Baseline: missing phase columns for {drone}")
+                            print(f"    Baseline: missing phase_diff columns for {drone}")
                     else:
                         print(f"    Baseline: no valid data in {baseline_csv.name}")
                 
@@ -553,9 +491,127 @@ def plot_phase_errors():
     plt.tight_layout()
     
     # Save figure
-    output_path = base_dir / 'phase_errors_gps_montage.png'
+    output_path = plots_dir / 'phase_errors_gps_montage.png'
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
     print(f"\nError plot saved to: {output_path}")
+    
+    plt.close()
+
+
+def plot_radius_errors():
+    """
+    Create a 4x3 montage showing radius values for GPS group.
+    Rows: speeds (0.2, 0.4, 0.6, 0.8)
+    Columns: drones (C04, C05, C14)
+    
+    For each drone:
+    - Blue lines: individual radius values from 5 CSV files
+    - Black dashed line: nominal radius (1.0 m)
+    """
+    fig, axes = plt.subplots(4, 3, figsize=(18, 16), sharex=True, sharey=True)
+    
+    # Process GPS group with modelA
+    group = 'gps'
+    model = 'modelC'
+    source = 'filtered'
+    nominal_radius = 1.0  # meters
+    
+    for i, speed in enumerate(speeds):
+        for j, drone in enumerate(drones):
+            ax = axes[i, j]
+            
+            try:
+                # Find CSV files (should be 5 for GPS group)
+                csv_files = find_csv_files(group, model, speed)
+                
+                if len(csv_files) == 0:
+                    ax.text(0.5, 0.5, 'No data', ha='center', va='center', transform=ax.transAxes)
+                    ax.set_xticks([])
+                    ax.set_yticks([])
+                    continue
+                
+                print(f"Processing radius errors speed={speed}, drone={drone}: found {len(csv_files)} CSV files")
+                
+                # Plot nominal radius line
+                ax.axhline(y=nominal_radius, color='k', linestyle='--', linewidth=2, 
+                          label=f'Nominal ({nominal_radius} m)', alpha=0.7, zorder=1)
+                
+                # Process each CSV file
+                for csv_idx, csv_path in enumerate(csv_files):
+                    df = load_and_crop_csv(csv_path)
+                    
+                    if df is None or len(df) == 0:
+                        print(f"  Skipping {csv_path.name}: no valid data")
+                        continue
+                    
+                    # Get radius column for this drone
+                    radius_cols = [col for col in df.columns if drone in col and 'radius' in col.lower() and source in col.lower()]
+                    
+                    # If not found with source, try without
+                    if len(radius_cols) == 0:
+                        radius_cols = [col for col in df.columns if drone in col and 'radius' in col.lower()]
+                    
+                    if len(radius_cols) == 0:
+                        print(f"  Skipping {csv_path.name}: missing radius column")
+                        continue
+                    
+                    radius_col = radius_cols[0]
+                    
+                    # Get time column
+                    timestamp_cols = [col for col in df.columns if 'time' in col.lower() or 'stamp' in col.lower()]
+                    time_col = timestamp_cols[0] if len(timestamp_cols) > 0 else None
+                    
+                    # Get valid data
+                    valid_data = df[[time_col, radius_col]].dropna()
+                    
+                    if len(valid_data) == 0:
+                        print(f"  Skipping {csv_path.name}: insufficient valid data")
+                        continue
+                    
+                    # Extract time and radius
+                    time_data = valid_data[time_col].values
+                    radius_data = valid_data[radius_col].values
+                    
+                    # Plot individual radius
+                    alpha = 0.5 if len(csv_files) > 1 else 0.7
+                    label = 'Radius' if csv_idx == 0 else None
+                    
+                    ax.plot(time_data, radius_data, 'b-', linewidth=1.0, 
+                           alpha=alpha, label=label, zorder=2)
+                
+                # Configure plot
+                ax.grid(True, alpha=0.3, linestyle=':')
+                ax.set_ylim(0.7, 1.3)
+                
+                # Labels
+                if i == 0:
+                    ax.set_title(f'{labels[drone]}')
+                if j == 0:
+                    omega_value = speed.split('_')[1]
+                    ax.set_ylabel(rf'$\omega = 0.{omega_value}$ (rad/s)' + '\n\n' + 'Radius (m)')
+                
+                if i == len(speeds) - 1:
+                    ax.set_xlabel('Time (s)')
+                
+                ax.tick_params(labelsize=9)
+                
+                # Add legend (only for first subplot)
+                if i == 0 and j == 0:
+                    ax.legend(loc='upper right', fontsize=8)
+                
+            except Exception as e:
+                print(f"Error plotting radius errors speed={speed}, drone={drone}: {e}")
+                import traceback
+                traceback.print_exc()
+                ax.text(0.5, 0.5, f'Error:\n{str(e)[:50]}', ha='center', va='center', 
+                       transform=ax.transAxes, fontsize=8, color='red')
+    
+    plt.tight_layout()
+    
+    # Save figure
+    output_path = plots_dir / 'radius_gps_montage.png'
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    print(f"\nRadius plot saved to: {output_path}")
     
     plt.close()
 
@@ -690,38 +746,38 @@ def plot_omega_errors():
                                     color=drone_color, alpha=0.15, zorder=2)
                 
                 # Process baseline data (single run)
-                # baseline_csv_files = find_csv_files('baseline', model, speed)
-                # if len(baseline_csv_files) > 0:
-                #     # Use the first (and likely only) baseline file
-                #     baseline_csv = baseline_csv_files[0]
-                #     df_baseline = load_and_crop_csv(baseline_csv)
+                baseline_csv_files = find_csv_files('baseline', model, speed)
+                if len(baseline_csv_files) > 0:
+                    # Use the first (and likely only) baseline file
+                    baseline_csv = baseline_csv_files[0]
+                    df_baseline = load_and_crop_csv(baseline_csv)
                     
-                #     if df_baseline is not None and len(df_baseline) > 0:
-                #         # Get omega column for this drone from baseline
-                #         omega_cols_base = [col for col in df_baseline.columns if drone in col and 'omega' in col.lower()]
+                    if df_baseline is not None and len(df_baseline) > 0:
+                        # Get omega column for this drone from baseline
+                        omega_cols_base = [col for col in df_baseline.columns if drone in col and 'omega' in col.lower()]
                         
-                #         if len(omega_cols_base) > 0:
-                #             omega_col_base = omega_cols_base[0]
+                        if len(omega_cols_base) > 0:
+                            omega_col_base = omega_cols_base[0]
                             
-                #             # Get time column
-                #             timestamp_cols = [col for col in df_baseline.columns if 'time' in col.lower() or 'stamp' in col.lower()]
-                #             time_col_base = timestamp_cols[0] if len(timestamp_cols) > 0 else None
+                            # Get time column
+                            timestamp_cols = [col for col in df_baseline.columns if 'time' in col.lower() or 'stamp' in col.lower()]
+                            time_col_base = timestamp_cols[0] if len(timestamp_cols) > 0 else None
                             
-                #             # Get valid data
-                #             omega_valid_base = df_baseline[[time_col_base, omega_col_base]].dropna()
+                            # Get valid data
+                            omega_valid_base = df_baseline[[time_col_base, omega_col_base]].dropna()
                             
-                #             if len(omega_valid_base) > 0:
-                #                 # Extract time and omega
-                #                 time_data_base = omega_valid_base[time_col_base].values
-                #                 omega_data_base = omega_valid_base[omega_col_base].values
+                            if len(omega_valid_base) > 0:
+                                # Extract time and omega
+                                time_data_base = omega_valid_base[time_col_base].values
+                                omega_data_base = omega_valid_base[omega_col_base].values
                                 
-                #                 # Compute errors
-                #                 error_omega_base = omega_data_base - nominal_omega
+                                # Compute errors
+                                error_omega_base = omega_data_base - nominal_omega
                                 
-                #                 # Plot baseline as dashed line
-                #                 ax.plot(time_data_base, error_omega_base, '--', color=drone_color, 
-                #                        linewidth=1.5, label=f'{labels[drone]} (Baseline)', 
-                #                        alpha=0.9, zorder=4)
+                                # Plot baseline as dashed line
+                                ax.plot(time_data_base, error_omega_base, '--', color=drone_color, 
+                                       linewidth=1.5, label=f'{labels[drone]} (Baseline)', 
+                                       alpha=0.9, zorder=4)
             
             # Configure plot
             ax.grid(True, linestyle=':')
@@ -737,8 +793,8 @@ def plot_omega_errors():
                 ax.set_ylabel(rf'$\mathbf{{\varepsilon_{{\omega}}}}$ (rad/s)')
             
             # Add legend to the last subplot
-            # if i == len(speeds) - 1:
-            #     ax.legend(loc='upper right', fontsize=10, framealpha=0.9)
+            if i == len(speeds) - 1:
+                ax.legend(loc='lower right', fontsize=10, framealpha=0.9)
             
         except Exception as e:
             print(f"Error plotting omega errors for speed={speed}: {e}")
@@ -750,7 +806,7 @@ def plot_omega_errors():
     plt.tight_layout()
     
     # Save figure
-    output_path = base_dir / 'omega_errors_gps_montage.png'
+    output_path = plots_dir / 'omega_errors_gps_montage.png'
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
     print(f"\nOmega error plot saved to: {output_path}")
     
@@ -825,59 +881,40 @@ def plot_phase_errors_single_drone(drone='C05'):
                         print(f"  Skipping {csv_path.name}: no valid data")
                         continue
                     
-                    # Get phase columns for ego, follower, and leader
-                    ego_phase_col = get_phase_column(df, drone, source)
-                    follower_phase_col = get_phase_column(df, follower, source)
-                    leader_phase_col = get_phase_column(df, leader, source)
+                    # Get phase_diff columns (already computed in the data)
+                    phase_diff_follower_cols = [col for col in df.columns if drone in col and 'phase_diff' in col.lower() and 'follower' in col.lower() and source in col.lower()]
+                    phase_diff_leader_cols = [col for col in df.columns if drone in col and 'phase_diff' in col.lower() and 'leader' in col.lower() and source in col.lower()]
                     
-                    if ego_phase_col is None or follower_phase_col is None or leader_phase_col is None:
-                        print(f"  Skipping {csv_path.name}: missing phase columns")
+                    # If not found with source, try without
+                    if len(phase_diff_follower_cols) == 0:
+                        phase_diff_follower_cols = [col for col in df.columns if drone in col and 'phase_diff' in col.lower() and 'follower' in col.lower()]
+                    if len(phase_diff_leader_cols) == 0:
+                        phase_diff_leader_cols = [col for col in df.columns if drone in col and 'phase_diff' in col.lower() and 'leader' in col.lower()]
+                    
+                    if len(phase_diff_follower_cols) == 0 or len(phase_diff_leader_cols) == 0:
+                        print(f"  Skipping {csv_path.name}: missing phase_diff columns")
                         continue
+                    
+                    phase_diff_follower_col = phase_diff_follower_cols[0]
+                    phase_diff_leader_col = phase_diff_leader_cols[0]
                     
                     # Get time column
                     timestamp_cols = [col for col in df.columns if 'time' in col.lower() or 'stamp' in col.lower()]
                     time_col = timestamp_cols[0] if len(timestamp_cols) > 0 else None
                     
-                    # Get valid data for each drone separately
-                    ego_valid = df[[time_col, ego_phase_col]].dropna()
-                    follower_valid = df[[time_col, follower_phase_col]].dropna()
-                    leader_valid = df[[time_col, leader_phase_col]].dropna()
                     
-                    if len(ego_valid) == 0 or len(follower_valid) == 0 or len(leader_valid) == 0:
-                        print(f"  Skipping {csv_path.name}: insufficient valid data")
-                        continue
-
-                    total_length = min(len(ego_valid), len(follower_valid), len(leader_valid))
-                    
-                    # Extract time and phase for each drone
-                    time_ego = ego_valid[time_col].values[:total_length]
-                    phase_ego = ego_valid[ego_phase_col].values[:total_length]
-                    
-                    time_follower = follower_valid[time_col].values[:total_length]
-                    phase_follower = follower_valid[follower_phase_col].values[:total_length]
-                    
-                    time_leader = leader_valid[time_col].values[:total_length]
-                    phase_leader = leader_valid[leader_phase_col].values[:total_length]
-                    
-                    # Compute phase differences using unit vector method
-                    phi_diff_follower = np.array([
-                        compute_phase_diff_unit_vector(phase_ego[k], phase_follower[k])
-                        for k in range(len(phase_ego))
-                    ])
-                    
-                    phi_diff_leader = np.array([
-                        compute_phase_diff_unit_vector(phase_ego[k], phase_leader[k])
-                        for k in range(len(phase_ego))
-                    ])
+                    # Extract time and phase differences (already in degrees)
+                    phi_diff_follower = df[[time_col, phase_diff_follower_col]].dropna().values
+                    phi_diff_leader = df[[time_col, phase_diff_leader_col]].dropna().values
                     
                     # Compute errors (difference from theoretical 120°)
-                    error_follower = phi_diff_follower - theoretical_phase
-                    error_leader = phi_diff_leader - theoretical_phase
+                    error_follower = np.abs(phi_diff_follower[:, 1] - theoretical_phase)
+                    error_leader = np.abs(phi_diff_leader[:, 1] - theoretical_phase)
                     
                     # Store errors and time
                     errors_follower_all.append(error_follower)
                     errors_leader_all.append(error_leader)
-                    time_references.append(time_ego)
+                    time_references.append(phi_diff_follower[:, 0])
                 
                 # If we have data from multiple runs, compute statistics
                 if len(errors_follower_all) > 0:                    
@@ -926,67 +963,45 @@ def plot_phase_errors_single_drone(drone='C05'):
                                     color='blue', alpha=0.15, zorder=2)
                 
                 # Process baseline data (single run) for comparison
-                baseline_csv_files = find_csv_files('baseline', model, speed)
-                if len(baseline_csv_files) > 0:
-                    print(f"  Processing baseline: found {len(baseline_csv_files)} CSV file(s)")
+                # baseline_csv_files = find_csv_files('baseline', model, speed)
+                # if len(baseline_csv_files) > 0:
+                #     print(f"  Processing baseline: found {len(baseline_csv_files)} CSV file(s)")
                     
-                    # Use the first (and likely only) baseline file
-                    baseline_csv = baseline_csv_files[0]
-                    df_baseline = load_and_crop_csv(baseline_csv)
+                #     # Use the first (and likely only) baseline file
+                #     baseline_csv = baseline_csv_files[0]
+                #     df_baseline = load_and_crop_csv(baseline_csv)
                     
-                    if df_baseline is not None and len(df_baseline) > 0:
-                        # Get phase columns for ego, follower, and leader from baseline
-                        ego_phase_col_base = get_phase_column(df_baseline, drone, 'baseline')
-                        follower_phase_col_base = get_phase_column(df_baseline, follower, 'baseline')
-                        leader_phase_col_base = get_phase_column(df_baseline, leader, 'baseline')
+                #     if df_baseline is not None and len(df_baseline) > 0:
+                #         # Get phase_diff columns from baseline
+                #         phase_diff_follower_cols_base = [col for col in df_baseline.columns if drone in col and 'phase_diff' in col.lower() and 'follower' in col.lower()]
+                #         phase_diff_leader_cols_base = [col for col in df_baseline.columns if drone in col and 'phase_diff' in col.lower() and 'leader' in col.lower()]
                         
-                        # If 'baseline' source not found, try without source specification
-                        if ego_phase_col_base is None:
-                            ego_phase_col_base = get_phase_column(df_baseline, drone, '')
-                        if follower_phase_col_base is None:
-                            follower_phase_col_base = get_phase_column(df_baseline, follower, '')
-                        if leader_phase_col_base is None:
-                            leader_phase_col_base = get_phase_column(df_baseline, leader, '')
-                        
-                        if ego_phase_col_base is not None and follower_phase_col_base is not None and leader_phase_col_base is not None:
-                            # Get time column
-                            timestamp_cols = [col for col in df_baseline.columns if 'time' in col.lower() or 'stamp' in col.lower()]
-                            time_col_base = timestamp_cols[0] if len(timestamp_cols) > 0 else None
+                #         if len(phase_diff_follower_cols_base) > 0 and len(phase_diff_leader_cols_base) > 0:
+                #             phase_diff_follower_col_base = phase_diff_follower_cols_base[0]
+                #             phase_diff_leader_col_base = phase_diff_leader_cols_base[0]
                             
-                            # Get valid data
-                            ego_valid_base = df_baseline[[time_col_base, ego_phase_col_base]].dropna()
-                            follower_valid_base = df_baseline[[time_col_base, follower_phase_col_base]].dropna()
-                            leader_valid_base = df_baseline[[time_col_base, leader_phase_col_base]].dropna()
+                #             # Get time column
+                #             timestamp_cols = [col for col in df_baseline.columns if 'time' in col.lower() or 'stamp' in col.lower()]
+                #             time_col_base = timestamp_cols[0] if len(timestamp_cols) > 0 else None
                             
-                            total_length_base = min(len(ego_valid_base), len(follower_valid_base), len(leader_valid_base))
+                #             # Get valid data
+                #             valid_data_base = df_baseline[[time_col_base, phase_diff_follower_col_base, phase_diff_leader_col_base]].dropna()
                             
-                            if total_length_base > 0:
-                                # Extract time and phase
-                                time_ego_base = ego_valid_base[time_col_base].values[:total_length_base]
-                                phase_ego_base = ego_valid_base[ego_phase_col_base].values[:total_length_base]
-                                phase_follower_base = follower_valid_base[follower_phase_col_base].values[:total_length_base]
-                                phase_leader_base = leader_valid_base[leader_phase_col_base].values[:total_length_base]
+                #             if len(valid_data_base) > 0:
+                #                 # Extract time and phase differences (convert from radians to degrees)
+                #                 time_base = valid_data_base[time_col_base].values
+                #                 phi_diff_follower_base = np.rad2deg(valid_data_base[phase_diff_follower_col_base].values)
+                #                 phi_diff_leader_base = np.rad2deg(valid_data_base[phase_diff_leader_col_base].values)
                                 
-                                # Compute phase differences
-                                phi_diff_follower_base = np.array([
-                                    compute_phase_diff_unit_vector(phase_ego_base[k], phase_follower_base[k])
-                                    for k in range(len(phase_ego_base))
-                                ])
+                #                 # Compute errors
+                #                 error_follower_base = phi_diff_follower_base - theoretical_phase
+                #                 error_leader_base = phi_diff_leader_base - theoretical_phase
                                 
-                                phi_diff_leader_base = np.array([
-                                    compute_phase_diff_unit_vector(phase_ego_base[k], phase_leader_base[k])
-                                    for k in range(len(phase_ego_base))
-                                ])
-                                
-                                # Compute errors
-                                error_follower_base = phi_diff_follower_base - theoretical_phase
-                                error_leader_base = phi_diff_leader_base - theoretical_phase
-                                
-                                # Plot baseline as dashed lines
-                                ax.plot(time_ego_base, error_follower_base, 'm--', linewidth=2.5, 
-                                       label='Baseline to Follower', alpha=1.0, zorder=4)
-                                ax.plot(time_ego_base, error_leader_base, 'c--', linewidth=2.5, 
-                                       label='Baseline to Leader', alpha=1.0, zorder=4)
+                #                 # Plot baseline as dashed lines
+                #                 ax.plot(time_base, error_follower_base, 'm--', linewidth=2.5, 
+                #                        label='Baseline to Follower', alpha=1.0, zorder=4)
+                #                 ax.plot(time_base, error_leader_base, 'c--', linewidth=2.5, 
+                #                        label='Baseline to Leader', alpha=1.0, zorder=4)
                 
                 # Configure plot
                 ax.grid(True, linestyle=':')
@@ -1027,7 +1042,7 @@ def plot_phase_errors_single_drone(drone='C05'):
     plt.tight_layout(rect=[0, 0, 1, 0.99])
     
     # Save figure
-    output_path = base_dir / f'phase_errors_{drone}_experiments_montage.png'
+    output_path = plots_dir / f'phase_errors_{drone}_experiments_montage.png'
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
     print(f"\nPhase errors plot for {drone} saved to: {output_path}")
     
@@ -1237,7 +1252,7 @@ def plot_radius_errors_single_drone(drone='C05'):
     plt.tight_layout(rect=[0, 0, 1, 0.99])
     
     # Save figure
-    output_path = base_dir / f'radius_errors_{drone}_experiments_montage.png'
+    output_path = plots_dir / f'radius_errors_{drone}_experiments_montage.png'
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
     print(f"\nRadius errors plot for {drone} saved to: {output_path}")
     
@@ -1480,7 +1495,7 @@ def plot_3d_trajectories_single_drone(drone='C05'):
         model_name = 'Model A' if model == 'modelA' else 'Model C'
         
         # Save figure
-        output_path = base_dir / f'3d_trajectories_{drone}_{model}_montage.png'
+        output_path = plots_dir / f'3d_trajectories_{drone}_{model}_montage.png'
         plt.savefig(output_path, dpi=150)
         print(f"\n3D trajectories plot for {drone} ({model_name}) saved to: {output_path}")
         
@@ -1488,27 +1503,32 @@ def plot_3d_trajectories_single_drone(drone='C05'):
 
 
 if __name__ == '__main__':
-    # print("=" * 80)
-    # print("PLOTTING PHASE DIFFERENCES - GPS GROUP")
-    # print("=" * 80)
-    # plot_phase_differences()
+    print("=" * 80)
+    print("PLOTTING PHASE DIFFERENCES - GPS GROUP")
+    print("=" * 80)
+    plot_phase_differences()
     
-    # print("\n" + "=" * 80)
-    # print("PLOTTING PHASE ERRORS - GPS GROUP")
-    # print("=" * 80)
-    # plot_phase_errors()
+    print("\n" + "=" * 80)
+    print("PLOTTING PHASE ERRORS - GPS GROUP")
+    print("=" * 80)
+    plot_phase_errors()
     
-    # print("\n" + "=" * 80)
-    # print("PLOTTING OMEGA ERRORS - GPS GROUP")
-    # print("=" * 80)
-    # plot_omega_errors()
+    print("\n" + "=" * 80)
+    print("PLOTTING OMEGA ERRORS - GPS GROUP")
+    print("=" * 80)
+    plot_omega_errors()
+
+    print("\n" + "=" * 80)
+    print("PLOTTING OMEGA ERRORS - GPS GROUP")
+    print("=" * 80)
+    plot_radius_errors()
     
     # Plot phase errors for each drone across all experiments
-    # for drone in drones:
-    #     print("\n" + "=" * 80)
-    #     print(f"PLOTTING PHASE ERRORS FOR {drone} ACROSS EXPERIMENTS")
-    #     print("=" * 80)
-    #     plot_phase_errors_single_drone(drone=drone)
+    for drone in drones:
+        print("\n" + "=" * 80)
+        print(f"PLOTTING PHASE ERRORS FOR {drone} ACROSS EXPERIMENTS")
+        print("=" * 80)
+        plot_phase_errors_single_drone(drone=drone)
     
     # Plot radius errors for each drone across all experiments
     for drone in drones:
@@ -1518,9 +1538,9 @@ if __name__ == '__main__':
         plot_radius_errors_single_drone(drone=drone)
     
     # Plot 3D trajectories for each drone across all experiments
-    # for drone in drones:
-    #     print("\n" + "=" * 80)
-    #     print(f"PLOTTING 3D TRAJECTORIES FOR {drone} ACROSS EXPERIMENTS")
-    #     print("=" * 80)
-    #     plot_3d_trajectories_single_drone(drone=drone)
+    for drone in drones:
+        print("\n" + "=" * 80)
+        print(f"PLOTTING 3D TRAJECTORIES FOR {drone} ACROSS EXPERIMENTS")
+        print("=" * 80)
+        plot_3d_trajectories_single_drone(drone=drone)
 

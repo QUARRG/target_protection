@@ -7,7 +7,7 @@ from tqdm import tqdm
 
 
 # Define the root directory containing the bag files
-rootdir = os.path.join('/home/paulo/Documents/bags_filter_2/')
+rootdir = os.path.join('/home/paulo/Documents/DATA_NEW_2/')
 
 # Find all .db3 files in the rootdir
 bag_files = []
@@ -43,6 +43,12 @@ topics_to_extract = [
     ['/C04/baseline/pose', 'geometry_msgs/msg/PoseStamped'],
     ['/C05/baseline/pose', 'geometry_msgs/msg/PoseStamped'],
     ['/C14/baseline/pose', 'geometry_msgs/msg/PoseStamped'],
+    ['/C04/baseline/phase_diff/leader', 'std_msgs/msg/Float32'],
+    ['/C04/baseline/phase_diff/follower', 'std_msgs/msg/Float32'],
+    ['/C05/baseline/phase_diff/leader', 'std_msgs/msg/Float32'],
+    ['/C05/baseline/phase_diff/follower', 'std_msgs/msg/Float32'],
+    ['/C14/baseline/phase_diff/leader', 'std_msgs/msg/Float32'],
+    ['/C14/baseline/phase_diff/follower', 'std_msgs/msg/Float32'],
     # Filter topics
     ['/C04/filtered/radius', 'std_msgs/msg/Float32'],
     ['/C05/filtered/radius', 'std_msgs/msg/Float32'],
@@ -56,6 +62,12 @@ topics_to_extract = [
     ['/C04/filtered/pose', 'geometry_msgs/msg/PoseStamped'],
     ['/C05/filtered/pose', 'geometry_msgs/msg/PoseStamped'],
     ['/C14/filtered/pose', 'geometry_msgs/msg/PoseStamped'],
+    ['/C04/filtered/phase_diff/leader', 'std_msgs/msg/Float32'],
+    ['/C04/filtered/phase_diff/follower', 'std_msgs/msg/Float32'],
+    ['/C05/filtered/phase_diff/leader', 'std_msgs/msg/Float32'],
+    ['/C05/filtered/phase_diff/follower', 'std_msgs/msg/Float32'],
+    ['/C14/filtered/phase_diff/leader', 'std_msgs/msg/Float32'],
+    ['/C14/filtered/phase_diff/follower', 'std_msgs/msg/Float32'],
 ]
 
 typestore = get_typestore(Stores.ROS2_HUMBLE)
