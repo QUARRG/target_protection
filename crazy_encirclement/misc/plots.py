@@ -11,7 +11,7 @@ warnings.filterwarnings('ignore')
 plt.rcParams.update({'text.usetex': False, 'font.size': 20, 'figure.dpi': 300})
 
 # Configuration
-base_dir = Path('/home/paulo/Documents/DATA_NEW/')
+base_dir = Path('/home/paulo/Documents/k_03/')
 plots_dir = base_dir / 'plots'
 plots_dir.mkdir(exist_ok=True)
 groups = ['baseline', 'gps', 'relative']
@@ -66,32 +66,55 @@ def find_csv_files(group, model, speed):
 def load_and_crop_csv(csv_path, crop_duration=CROP_DURATION):
     """
     Load a CSV file and crop data from when _encircle becomes True.
+    If _encircle flag is not available, use the first filtered/omega entry as the start point.
     Returns the cropped dataframe.
     """
     try:
         df = pd.read_csv(csv_path)
         
-        # Check if _encircle_data column exists
-        if '_encircle_data' not in df.columns:
-            print(f"Warning: '_encircle_data' column not found in {csv_path}")
-            return None
+        start_idx = None
         
-        # Find the first index where _encircle_data becomes True
-        encircle_idx = df[df['_encircle_data'] == True].index
+        # Try to use _encircle_data column first
+        if '_encircle_data' in df.columns:
+            encircle_idx = df[df['_encircle_data'] == True].index
+            if len(encircle_idx) > 0:
+                start_idx = encircle_idx[0]
+                print(f"Using _encircle_data flag at index {start_idx} for {csv_path.name}")
         
-        if len(encircle_idx) == 0:
-            print(f"Warning: _encircle_data never becomes True in {csv_path}")
-            return None
+        # Fallback: use first filtered/omega entry (any drone)
+        if start_idx is None:
+            print(f"Warning: _encircle_data not found or never True in {csv_path.name}, using filtered/omega fallback")
+            
+            # Find all omega columns with 'filtered' in the name
+            omega_cols = [col for col in df.columns if 'omega' in col.lower() and 'filtered' in col.lower()]
+            
+            # if len(omega_cols) == 0:
+            #     # Try without 'filtered' keyword
+            #     omega_cols = [col for col in df.columns if 'omega' in col.lower()]
+            
+            if len(omega_cols) == 0:
+                print(f"Error: No omega columns found in {csv_path.name}")
+                return None
+            
+            # Find the first non-NaN entry across all omega columns
+            for omega_col in omega_cols:
+                non_nan_idx = df[omega_col].dropna().index
+                if len(non_nan_idx) > 0:
+                    if start_idx is None or non_nan_idx[0] < start_idx:
+                        start_idx = non_nan_idx[0]
+            
+            if start_idx is None:
+                print(f"Error: No valid omega data found in {csv_path.name}")
+                return None
+            
+            print(f"Using first filtered/omega entry at index {start_idx} for {csv_path.name}")
         
-        start_idx = encircle_idx[0]
-        
-        # Assume there's a timestamp column (common names)
+        # Get timestamp column
         timestamp_cols = [col for col in df.columns if 'time' in col.lower() or 'stamp' in col.lower()]
         
         if len(timestamp_cols) == 0:
-            print(f"Warning: No timestamp column found in {csv_path}")
+            print(f"Warning: No timestamp column found in {csv_path.name}")
             # If no timestamp, crop by row count (assuming constant rate)
-            # This is a fallback - adjust as needed
             return df.iloc[start_idx:start_idx + int(crop_duration * 100)]  # Assuming ~100Hz
         
         # Use the first timestamp column found
@@ -813,6 +836,840 @@ def plot_omega_errors():
     plt.close()
 
 
+def plot_omega_errors_experiments():
+    """
+    Create a 4x4 montage showing omega errors across different experiments.
+    Rows: speeds (0.2, 0.4, 0.6, 0.8)
+    Columns: experiments (Filter 1 + Model A, Filter 2 + Model A, Filter 1 + Model C, Filter 2 + Model C)
+    
+    For each cell:
+    - Three colored lines: one for each drone (C14, C05, C04)
+    - Solid lines with envelopes: mean omega error ± σ (5 CSV files for gps/relative, 1 for baseline)
+    - Black dashed line: zero error (nominal omega)
+    """
+    fig, axes = plt.subplots(4, 4, figsize=(24, 16), sharex=True, sharey=True)
+    
+    # Get colormap for drones
+    cmap = plt.get_cmap(colormap_name)
+    colors = [cmap(i) for i in [0.125, 0.65, 0.9]]
+    
+    # Experiment configurations: (group, model)
+    experiments = [
+        ('gps', 'modelA'),
+        ('relative', 'modelA'),
+        ('gps', 'modelC'),
+        ('relative', 'modelC')
+    ]
+    
+    experiment_labels = [
+        'Filter 1 + Model A',
+        'Filter 2 + Model A',
+        'Filter 1 + Model C',
+        'Filter 2 + Model C'
+    ]
+    
+    # Nominal omega values corresponding to each speed
+    nominal_omegas = {
+        '0_2': 0.2,
+        '0_4': 0.4,
+        '0_6': 0.6,
+        '0_8': 0.8
+    }
+    
+    for i, speed in enumerate(speeds):
+        nominal_omega = nominal_omegas[speed]
+        
+        for j, (group, model) in enumerate(experiments):
+            ax = axes[i, j]
+            
+            try:
+                print(f"Processing speed={speed}, experiment={group}+{model}, ω={nominal_omega}")
+                
+                # Plot zero error line (theoretical)
+                ax.axhline(y=0, color='k', linestyle='-', linewidth=1, alpha=0.9, zorder=1)
+                
+                # Process each drone
+                for drone_idx, drone in enumerate(drones):
+                    drone_color = colors[drone_idx]
+                    
+                    # Find CSV files
+                    csv_files = find_csv_files(group, model, speed)
+                    
+                    if len(csv_files) == 0:
+                        continue
+                    
+                    print(f"  {drone}: found {len(csv_files)} files")
+                    
+                    # Collect all omega errors from CSV files
+                    errors_omega_all = []
+                    time_references = []
+                    
+                    # Process each CSV file
+                    for csv_idx, csv_path in enumerate(csv_files):
+                        df = load_and_crop_csv(csv_path)
+                        
+                        if df is None or len(df) == 0:
+                            continue
+                        
+                        # Get omega column for this drone
+                        omega_cols = [col for col in df.columns if drone in col and 'omega' in col.lower() and 'filtered' in col.lower()]
+                        
+                        if len(omega_cols) == 0:
+                            # Try without 'filtered' keyword
+                            omega_cols = [col for col in df.columns if drone in col and 'omega' in col.lower()]
+                        
+                        if len(omega_cols) == 0:
+                            continue
+                        
+                        omega_col = omega_cols[0]
+                        
+                        # Get time column
+                        timestamp_cols = [col for col in df.columns if 'time' in col.lower() or 'stamp' in col.lower()]
+                        time_col = timestamp_cols[0] if len(timestamp_cols) > 0 else None
+                        
+                        # Get valid data
+                        omega_valid = df[[time_col, omega_col]].dropna()
+                        
+                        if len(omega_valid) == 0:
+                            continue
+                        
+                        # Extract time and omega
+                        time_data = omega_valid[time_col].values
+                        omega_data = omega_valid[omega_col].values
+                        
+                        # Compute errors (difference from nominal omega)
+                        error_omega = omega_data - nominal_omega
+                        
+                        # Store errors and time
+                        errors_omega_all.append(error_omega)
+                        time_references.append(time_data)
+                    
+                    # If we have data from multiple runs, compute statistics
+                    if len(errors_omega_all) > 0:
+                        # Create a common time grid based on the longest run
+                        longest_idx = np.argmax([len(t) for t in time_references])
+                        time_common = time_references[longest_idx]
+                        
+                        # Interpolate all runs to the common time grid
+                        errors_omega_interp = []
+                        
+                        for idx, (time_ref, err_omega) in enumerate(zip(time_references, errors_omega_all)):
+                            # Interpolate to common time grid, using NaN for extrapolation
+                            err_omega_interp = np.interp(time_common, time_ref, err_omega, left=np.nan, right=np.nan)
+                            errors_omega_interp.append(err_omega_interp)
+                        
+                        # Stack all interpolated errors
+                        errors_omega_stacked = np.array(errors_omega_interp)
+                        
+                        # Compute mean and std, ignoring NaN values
+                        mean_error_omega = np.nanmean(errors_omega_stacked, axis=0)
+                        std_error_omega = np.nanstd(errors_omega_stacked, axis=0)
+                        
+                        # Plot mean with 1-sigma envelope
+                        ax.plot(time_common, mean_error_omega, '-', color=drone_color, linewidth=2.0, 
+                               label=f'{labels[drone]}', zorder=3)
+                        ax.fill_between(time_common, 
+                                        mean_error_omega - std_error_omega,
+                                        mean_error_omega + std_error_omega,
+                                        color=drone_color, alpha=0.15, zorder=2)
+                
+                # Process baseline data from seed_40 (single run)
+                baseline_dir = base_dir / 'baseline' / model / speed / 'seed_40'
+                if baseline_dir.exists():
+                    baseline_csv_files = list(baseline_dir.glob('*.csv'))
+                    if len(baseline_csv_files) > 0:
+                        baseline_csv = baseline_csv_files[0]
+                        df_baseline = load_and_crop_csv(baseline_csv)
+                        
+                        if df_baseline is not None and len(df_baseline) > 0:
+                            for drone_idx, drone in enumerate(drones):
+                                drone_color = colors[drone_idx]
+                                
+                                # Get omega column for this drone from baseline
+                                omega_cols_base = [col for col in df_baseline.columns if drone in col and 'omega' in col.lower()]
+                                
+                                if len(omega_cols_base) > 0:
+                                    omega_col_base = omega_cols_base[0]
+                                    
+                                    # Get time column
+                                    timestamp_cols = [col for col in df_baseline.columns if 'time' in col.lower() or 'stamp' in col.lower()]
+                                    time_col_base = timestamp_cols[0] if len(timestamp_cols) > 0 else None
+                                    
+                                    # Get valid data
+                                    omega_valid_base = df_baseline[[time_col_base, omega_col_base]].dropna()
+                                    
+                                    if len(omega_valid_base) > 0:
+                                        # Extract time and omega
+                                        time_data_base = omega_valid_base[time_col_base].values
+                                        omega_data_base = omega_valid_base[omega_col_base].values
+                                        
+                                        # Compute errors
+                                        error_omega_base = omega_data_base - nominal_omega
+                                        
+                                        # Plot baseline as dashed line
+                                        ax.plot(time_data_base, error_omega_base, '--', color=drone_color, 
+                                               linewidth=1.5, alpha=0.7, zorder=4)
+                
+                # Configure plot
+                ax.grid(True, linestyle=':')
+                ax.set_ylim(-0.125, 0.125)
+                ax.set_xlim(0, CROP_DURATION)
+                
+                # Labels
+                if i == 0:
+                    ax.set_title(f'{experiment_labels[j]}', fontweight='bold')
+                if j == 0:
+                    omega_value = speed.split('_')[1]
+                    ax.set_ylabel(rf'$\omega_{{d}} = 0.{omega_value}$ (rad/s)' + '\n\n' + rf'$\mathbf{{\varepsilon_{{\omega}}}}$ (rad/s)')
+                
+                if i == len(speeds) - 1:
+                    ax.set_xlabel('Time (s)')
+                
+                # Add subplot label (a) to (p) - for 4x4 grid
+                subplot_index = i * 4 + j  # 0 to 15
+                subplot_label = chr(97 + subplot_index)  # 'a' to 'p'
+                ax.text(0.98, 0.97, f'({subplot_label})', transform=ax.transAxes,
+                       fontsize=18, fontweight='bold', va='top', ha='right',
+                       bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8, edgecolor='none'))
+                
+                # Add legend to the top-right subplot
+                if i == 0 and j == 3:
+                    ax.legend(loc='lower right', fontsize=14, framealpha=0.9)
+                
+            except Exception as e:
+                print(f"Error plotting speed={speed}, experiment={group}+{model}: {e}")
+                import traceback
+                traceback.print_exc()
+                ax.text(0.5, 0.5, f'Error:\n{str(e)[:50]}', ha='center', va='center', 
+                       transform=ax.transAxes, fontsize=8, color='red')
+    
+    plt.tight_layout(rect=[0, 0, 1, 0.99])
+    
+    # Save figure
+    output_path = plots_dir / 'omega_errors_experiments_montage.png'
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    print(f"\nOmega errors experiments plot saved to: {output_path}")
+    
+    plt.close()
+
+
+def plot_radius_errors_experiments():
+    """
+    Create a 4x4 montage showing radius errors across different experiments.
+    Rows: speeds (0.2, 0.4, 0.6, 0.8)
+    Columns: experiments (Filter 1 + Model A, Filter 2 + Model A, Filter 1 + Model C, Filter 2 + Model C)
+    
+    For each cell:
+    - Three colored lines: one for each drone (C14, C05, C04)
+    - Solid lines with envelopes: mean radius error ± σ (5 CSV files for gps/relative, 1 for baseline)
+    - Black horizontal line: zero error (nominal radius = 1.0 m)
+    """
+    fig, axes = plt.subplots(4, 4, figsize=(24, 16), sharex=True, sharey=True)
+    
+    # Get colormap for drones
+    cmap = plt.get_cmap(colormap_name)
+    colors = [cmap(i) for i in [0.125, 0.65, 0.9]]
+    
+    # Experiment configurations: (group, model)
+    experiments = [
+        ('gps', 'modelA'),
+        ('relative', 'modelA'),
+        ('gps', 'modelC'),
+        ('relative', 'modelC')
+    ]
+    
+    experiment_labels = [
+        'Filter 1 + Model A',
+        'Filter 2 + Model A',
+        'Filter 1 + Model C',
+        'Filter 2 + Model C'
+    ]
+    
+    nominal_radius = 1.0  # meters
+    
+    for i, speed in enumerate(speeds):
+        for j, (group, model) in enumerate(experiments):
+            ax = axes[i, j]
+            
+            try:
+                print(f"Processing speed={speed}, experiment={group}+{model}")
+                
+                # Plot zero error line (theoretical)
+                ax.axhline(y=0, color='k', linestyle='-', linewidth=1, alpha=0.9, zorder=1)
+                
+                # Process each drone
+                for drone_idx, drone in enumerate(drones):
+                    drone_color = colors[drone_idx]
+                    
+                    # Find CSV files
+                    csv_files = find_csv_files(group, model, speed)
+                    
+                    if len(csv_files) == 0:
+                        continue
+                    
+                    print(f"  {drone}: found {len(csv_files)} files")
+                    
+                    # Collect all radius errors from CSV files
+                    errors_radius_all = []
+                    time_references = []
+                    
+                    # Process each CSV file
+                    for csv_idx, csv_path in enumerate(csv_files):
+                        df = load_and_crop_csv(csv_path)
+                        
+                        if df is None or len(df) == 0:
+                            continue
+                        
+                        # Get radius column for this drone
+                        radius_cols = [col for col in df.columns if drone in col and 'radius' in col.lower() and 'filtered' in col.lower()]
+                        
+                        # if len(radius_cols) == 0:
+                        #     # Try without 'filtered' keyword
+                        #     radius_cols = [col for col in df.columns if drone in col and 'radius' in col.lower()]
+                        
+                        # if len(radius_cols) == 0:
+                        #     continue
+                        
+                        radius_col = radius_cols[0]
+                        
+                        # Get time column
+                        timestamp_cols = [col for col in df.columns if 'time' in col.lower() or 'stamp' in col.lower()]
+                        time_col = timestamp_cols[0] if len(timestamp_cols) > 0 else None
+                        
+                        # Get valid data
+                        radius_valid = df[[time_col, radius_col]].dropna()
+                        
+                        if len(radius_valid) == 0:
+                            continue
+                        
+                        # Extract time and radius
+                        time_data = radius_valid[time_col].values
+                        radius_data = radius_valid[radius_col].values
+                        
+                        # Compute errors (difference from nominal radius)
+                        error_radius = radius_data - nominal_radius
+                        
+                        # Store errors and time
+                        errors_radius_all.append(error_radius)
+                        time_references.append(time_data)
+                    
+                    # If we have data from multiple runs, compute statistics
+                    if len(errors_radius_all) > 0:
+                        # Create a common time grid based on the longest run
+                        longest_idx = np.argmax([len(t) for t in time_references])
+                        time_common = time_references[longest_idx]
+                        
+                        # Interpolate all runs to the common time grid
+                        errors_radius_interp = []
+                        
+                        for idx, (time_ref, err_radius) in enumerate(zip(time_references, errors_radius_all)):
+                            # Interpolate to common time grid, using NaN for extrapolation
+                            err_radius_interp = np.interp(time_common, time_ref, err_radius, left=np.nan, right=np.nan)
+                            errors_radius_interp.append(err_radius_interp)
+                        
+                        # Stack all interpolated errors
+                        errors_radius_stacked = np.array(errors_radius_interp)
+                        
+                        # Compute mean and std, ignoring NaN values
+                        mean_error_radius = np.nanmean(errors_radius_stacked, axis=0)
+                        std_error_radius = np.nanstd(errors_radius_stacked, axis=0)
+                        
+                        # Plot mean with 1-sigma envelope
+                        ax.plot(time_common, mean_error_radius, '-', color=drone_color, linewidth=2.0, 
+                               label=f'{labels[drone]}', zorder=3)
+                        ax.fill_between(time_common, 
+                                        mean_error_radius - std_error_radius,
+                                        mean_error_radius + std_error_radius,
+                                        color=drone_color, alpha=0.15, zorder=2)
+                
+                # Process baseline data from seed_40 (single run)
+                baseline_dir = base_dir / 'baseline' / model / speed / 'seed_40'
+                if baseline_dir.exists():
+                    baseline_csv_files = list(baseline_dir.glob('*.csv'))
+                    if len(baseline_csv_files) > 0:
+                        baseline_csv = baseline_csv_files[0]
+                        df_baseline = load_and_crop_csv(baseline_csv)
+                        
+                        if df_baseline is not None and len(df_baseline) > 0:
+                            for drone_idx, drone in enumerate(drones):
+                                drone_color = colors[drone_idx]
+                                
+                                # Get radius column for this drone from baseline
+                                radius_cols_base = [col for col in df_baseline.columns if drone in col and 'radius' in col.lower()]
+                                
+                                if len(radius_cols_base) > 0:
+                                    radius_col_base = radius_cols_base[0]
+                                    
+                                    # Get time column
+                                    timestamp_cols = [col for col in df_baseline.columns if 'time' in col.lower() or 'stamp' in col.lower()]
+                                    time_col_base = timestamp_cols[0] if len(timestamp_cols) > 0 else None
+                                    
+                                    # Get valid data
+                                    baseline_valid = df_baseline[[time_col_base, radius_col_base]].dropna()
+                                    
+                                    if len(baseline_valid) > 0:
+                                        # Extract time and radius
+                                        time_data_base = baseline_valid[time_col_base].values
+                                        radius_base = baseline_valid[radius_col_base].values
+                                        
+                                        # Compute errors
+                                        error_radius_base = radius_base - nominal_radius
+                                        
+                                        # Plot baseline as dashed line
+                                        ax.plot(time_data_base, error_radius_base, '--', color=drone_color, 
+                                               linewidth=1.5, alpha=0.7, zorder=4)
+                
+                # Configure plot
+                ax.grid(True, linestyle=':')
+                ax.set_ylim(-0.3, 0.3)
+                ax.set_xlim(0, CROP_DURATION)
+                
+                # Labels
+                if i == 0:
+                    ax.set_title(f'{experiment_labels[j]}', fontweight='bold')
+                if j == 0:
+                    omega_value = speed.split('_')[1]
+                    ax.set_ylabel(rf'$\omega_{{d}} = 0.{omega_value}$ (rad/s)' + '\n\n' + rf'$\mathbf{{\varepsilon_{{r}}}}$ (m)')
+                
+                if i == len(speeds) - 1:
+                    ax.set_xlabel('Time (s)')
+                
+                # Add subplot label (a) to (p) - for 4x4 grid
+                subplot_index = i * 4 + j  # 0 to 15
+                subplot_label = chr(97 + subplot_index)  # 'a' to 'p'
+                ax.text(0.98, 0.97, f'({subplot_label})', transform=ax.transAxes,
+                       fontsize=18, fontweight='bold', va='top', ha='right',
+                       bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8, edgecolor='none'))
+                
+                # Add legend to the top-right subplot
+                if i == 0 and j == 3:
+                    ax.legend(loc='lower right', fontsize=14, framealpha=0.9)
+                
+            except Exception as e:
+                print(f"Error plotting speed={speed}, experiment={group}+{model}: {e}")
+                import traceback
+                traceback.print_exc()
+                ax.text(0.5, 0.5, f'Error:\n{str(e)[:50]}', ha='center', va='center', 
+                       transform=ax.transAxes, fontsize=8, color='red')
+    
+    plt.tight_layout(rect=[0, 0, 1, 0.99])
+    
+    # Save figure
+    output_path = plots_dir / 'radius_errors_experiments_montage.png'
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    print(f"\nRadius errors experiments plot saved to: {output_path}")
+    
+    plt.close()
+
+
+def plot_phases_differences_errors_experiments():
+    """
+    Create a 4x4 montage showing phase difference errors with leader across different experiments.
+    Rows: speeds (0.2, 0.4, 0.6, 0.8)
+    Columns: experiments (Filter 1 + Model A, Filter 2 + Model A, Filter 1 + Model C, Filter 2 + Model C)
+    
+    For each cell:
+    - Three colored lines: one for each drone (C14, C05, C04)
+    - Solid lines with envelopes: mean phase diff error ± σ (5 CSV files for gps/relative, 1 for baseline)
+    - Black horizontal line: zero error (nominal phase diff = 120 degrees)
+    """
+    fig, axes = plt.subplots(4, 4, figsize=(24, 16), sharex=True, sharey=True)
+    
+    # Nominal phase difference (120 degrees = 2π/3 radians)
+    nominal_phase_diff = 2.0 * np.pi / 3.0  # radians
+    nominal_phase_diff_deg = 120.0  # degrees
+    
+    # Get colormap for drones
+    cmap = plt.get_cmap(colormap_name)
+    colors = [cmap(i) for i in [0.125, 0.65, 0.9]]
+    
+    # Experiment configurations: (group, model)
+    experiments = [
+        ('gps', 'modelA'),
+        ('relative', 'modelA'),
+        ('gps', 'modelC'),
+        ('relative', 'modelC')
+    ]
+    
+    experiment_labels = [
+        'Filter 1 + Model A',
+        'Filter 2 + Model A',
+        'Filter 1 + Model C',
+        'Filter 2 + Model C'
+    ]
+    
+    for i, speed in enumerate(speeds):
+        for j, (group, model) in enumerate(experiments):
+            ax = axes[i, j]
+            
+            try:
+                print(f"Processing speed={speed}, experiment={group}+{model}")
+                
+                # Plot zero error line (theoretical)
+                ax.axhline(y=0, color='k', linestyle='-', linewidth=1, alpha=0.9, zorder=1)
+                
+                # Process each drone
+                for drone_idx, drone in enumerate(drones):
+                    drone_color = colors[drone_idx]
+                    
+                    # Find CSV files
+                    csv_files = find_csv_files(group, model, speed)
+                    
+                    if len(csv_files) == 0:
+                        continue
+                    
+                    # Load and process all runs
+                    phase_diff_errors_all = []
+                    time_references = []
+                    
+                    for csv_file in csv_files:
+                        df = load_and_crop_csv(csv_file)
+                        
+                        if df is None or len(df) == 0:
+                            continue
+                        
+                        # Get phase_diff_leader column for this drone
+                        phase_diff_cols = [col for col in df.columns 
+                                          if drone in col and 'phase_diff_leader' in col.lower() 
+                                          and 'filtered' in col.lower()]
+                        
+                        if len(phase_diff_cols) == 0:
+                            continue
+                        
+                        phase_diff_col = phase_diff_cols[0]
+                        
+                        # Get time column
+                        timestamp_cols = [col for col in df.columns if 'time' in col.lower() or 'stamp' in col.lower()]
+                        time_col = timestamp_cols[0] if len(timestamp_cols) > 0 else None
+                        
+                        if time_col is None:
+                            continue
+                        
+                        # Get valid data
+                        valid_data = df[[time_col, phase_diff_col]].dropna()
+                        
+                        if len(valid_data) > 0:
+                            time_ref = valid_data[time_col].values
+                            phase_diff_data = valid_data[phase_diff_col].values
+                            
+                            # Convert to degrees and compute errors
+                            phase_diff_data_deg = np.rad2deg(phase_diff_data)
+                            error_phase_diff = phase_diff_data_deg - nominal_phase_diff_deg
+                            
+                            phase_diff_errors_all.append(error_phase_diff)
+                            time_references.append(time_ref)
+                    
+                    # If we have data, compute mean and std
+                    if len(phase_diff_errors_all) > 0:
+                        # Use the longest time series as common reference
+                        longest_idx = np.argmax([len(t) for t in time_references])
+                        time_common = time_references[longest_idx]
+                        
+                        # Interpolate all runs to the common time grid
+                        errors_phase_diff_interp = []
+                        
+                        for idx, (time_ref, err_phase_diff) in enumerate(zip(time_references, phase_diff_errors_all)):
+                            # Interpolate to common time grid, using NaN for extrapolation
+                            err_phase_diff_interp = np.interp(time_common, time_ref, err_phase_diff, left=np.nan, right=np.nan)
+                            errors_phase_diff_interp.append(err_phase_diff_interp)
+                        
+                        # Stack all interpolated errors
+                        errors_phase_diff_stacked = np.array(errors_phase_diff_interp)
+                        
+                        # Compute mean and std, ignoring NaN values
+                        mean_error_phase_diff = np.nanmean(errors_phase_diff_stacked, axis=0)
+                        std_error_phase_diff = np.nanstd(errors_phase_diff_stacked, axis=0)
+                        
+                        # Plot mean with 1-sigma envelope
+                        ax.plot(time_common, mean_error_phase_diff, '-', color=drone_color, linewidth=2.0, 
+                               label=f'{labels[drone]}', zorder=3)
+                        ax.fill_between(time_common, 
+                                        mean_error_phase_diff - std_error_phase_diff,
+                                        mean_error_phase_diff + std_error_phase_diff,
+                                        color=drone_color, alpha=0.15, zorder=2)
+                
+                # Process baseline data from seed_40 (single run)
+                baseline_dir = base_dir / 'baseline' / model / speed / 'seed_40'
+                if baseline_dir.exists():
+                    baseline_csv_files = list(baseline_dir.glob('*.csv'))
+                    if len(baseline_csv_files) > 0:
+                        baseline_csv = baseline_csv_files[0]
+                        df_baseline = load_and_crop_csv(baseline_csv)
+                        
+                        if df_baseline is not None and len(df_baseline) > 0:
+                            for drone_idx, drone in enumerate(drones):
+                                drone_color = colors[drone_idx]
+                                
+                                # Get phase_diff_leader column for this drone from baseline
+                                phase_diff_cols_base = [col for col in df_baseline.columns 
+                                                       if drone in col and 'phase_diff_leader' in col.lower()]
+                                
+                                if len(phase_diff_cols_base) > 0:
+                                    phase_diff_col_base = phase_diff_cols_base[0]
+                                    
+                                    # Get time column
+                                    timestamp_cols = [col for col in df_baseline.columns if 'time' in col.lower() or 'stamp' in col.lower()]
+                                    time_col_base = timestamp_cols[0] if len(timestamp_cols) > 0 else None
+                                    
+                                    # Get valid data
+                                    baseline_valid = df_baseline[[time_col_base, phase_diff_col_base]].dropna()
+                                    
+                                    if len(baseline_valid) > 0:
+                                        # Extract time and phase_diff
+                                        time_data_base = baseline_valid[time_col_base].values
+                                        phase_diff_base = baseline_valid[phase_diff_col_base].values
+                                        
+                                        # Convert to degrees and compute errors
+                                        phase_diff_base_deg = np.rad2deg(phase_diff_base)
+                                        error_phase_diff_base = phase_diff_base_deg - nominal_phase_diff_deg
+                                        
+                                        # Plot baseline as dashed line
+                                        ax.plot(time_data_base, error_phase_diff_base, '--', color=drone_color, 
+                                               linewidth=1.5, alpha=0.7, zorder=4)
+                
+                # Configure plot
+                ax.grid(True, linestyle=':')
+                ax.set_ylim(-30, 30)
+                ax.set_xlim(0, CROP_DURATION)
+                
+                # Labels
+                if i == 0:
+                    ax.set_title(f'{experiment_labels[j]}', fontweight='bold')
+                if j == 0:
+                    omega_value = speed.split('_')[1]
+                    ax.set_ylabel(rf'$\omega_{{d}} = 0.{omega_value}$ (rad/s)' + '\n\n' + rf'$\mathbf{{\varepsilon_{{\phi}}}}$ (deg)')
+                
+                if i == len(speeds) - 1:
+                    ax.set_xlabel('Time (s)')
+                
+                # Add subplot label (a) to (p) - for 4x4 grid
+                subplot_index = i * 4 + j  # 0 to 15
+                subplot_label = chr(97 + subplot_index)  # 'a' to 'p'
+                ax.text(0.98, 0.97, f'({subplot_label})', transform=ax.transAxes,
+                       fontsize=18, fontweight='bold', va='top', ha='right',
+                       bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8, edgecolor='none'))
+                
+                # Add legend to the top-right subplot
+                if i == 0 and j == 3:
+                    ax.legend(loc='lower right', fontsize=14, framealpha=0.9)
+                
+            except Exception as e:
+                print(f"Error plotting speed={speed}, experiment={group}+{model}: {e}")
+                import traceback
+                traceback.print_exc()
+                ax.text(0.5, 0.5, f'Error:\n{str(e)[:50]}', ha='center', va='center', 
+                       transform=ax.transAxes, fontsize=8, color='red')
+    
+    plt.tight_layout(rect=[0, 0, 1, 0.99])
+    
+    # Save figure
+    output_path = plots_dir / 'phase_diff_leader_errors_experiments_montage.png'
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    print(f"\nPhase difference leader errors experiments plot saved to: {output_path}")
+    
+    plt.close()
+
+
+def plot_controller_gains_experiments():
+    """
+    Create a 4x4 montage showing controller gains across different experiments.
+    Rows: speeds (0.2, 0.4, 0.6, 0.8)
+    Columns: experiments (Filter 1 + Model A, Filter 2 + Model A, Filter 1 + Model C, Filter 2 + Model C)
+    
+    For each cell:
+    - Three colored lines: one for each drone (C14, C05, C04)
+    - Shows individual runs (no averaging) to see controller behavior
+    - Gain computed as: k_p * (1/(error_ahead + eps) + 1/(error_behind + eps))
+    """
+    fig, axes = plt.subplots(4, 4, figsize=(24, 16), sharex=True, sharey=True)
+    
+    # Controller parameters
+    k_p = 0.3  # From filters.yaml
+    eps = 1e-6  # Small constant to avoid division by zero
+    
+    # Get colormap for drones
+    cmap = plt.get_cmap(colormap_name)
+    colors = [cmap(i) for i in [0.125, 0.65, 0.9]]
+    
+    # Experiment configurations: (group, model)
+    experiments = [
+        ('gps', 'modelA'),
+        ('relative', 'modelA'),
+        ('gps', 'modelC'),
+        ('relative', 'modelC')
+    ]
+    
+    experiment_labels = [
+        'Filter 1 + Model A',
+        'Filter 2 + Model A',
+        'Filter 1 + Model C',
+        'Filter 2 + Model C'
+    ]
+    
+    for i, speed in enumerate(speeds):
+        for j, (group, model) in enumerate(experiments):
+            ax = axes[i, j]
+            
+            try:
+                print(f"Processing gains: speed={speed}, experiment={group}+{model}")
+                
+                # Process each drone
+                for drone_idx, drone in enumerate(drones):
+                    drone_color = colors[drone_idx]
+                    
+                    # Find CSV files
+                    csv_files = find_csv_files(group, model, speed)
+                    
+                    if len(csv_files) == 0:
+                        continue
+                    
+                    # Plot each run separately (no averaging)
+                    for run_idx, csv_file in enumerate(csv_files):
+                        df = load_and_crop_csv(csv_file)
+                        
+                        if df is None or len(df) == 0:
+                            continue
+                        
+                        # Get phase_diff columns for this drone
+                        phase_diff_leader_cols = [col for col in df.columns 
+                                                 if drone in col and 'phase_diff_leader' in col.lower() 
+                                                 and 'filtered' in col.lower()]
+                        phase_diff_follower_cols = [col for col in df.columns 
+                                                   if drone in col and 'phase_diff_follower' in col.lower() 
+                                                   and 'filtered' in col.lower()]
+                        
+                        if len(phase_diff_leader_cols) == 0 or len(phase_diff_follower_cols) == 0:
+                            continue
+                        
+                        phase_diff_leader_col = phase_diff_leader_cols[0]
+                        phase_diff_follower_col = phase_diff_follower_cols[0]
+                        
+                        # Get time column
+                        timestamp_cols = [col for col in df.columns if 'time' in col.lower() or 'stamp' in col.lower()]
+                        time_col = timestamp_cols[0] if len(timestamp_cols) > 0 else None
+                        
+                        if time_col is None:
+                            continue
+                        
+                        # Drop NaNs individually for each column
+                        # time_data = df[time_col].dropna().values
+                        error_ahead_data = df[[time_col, phase_diff_leader_col]].dropna().values
+                        error_behind_data = df[[time_col, phase_diff_follower_col]].dropna().values
+                        
+                        # Use minimum length to ensure alignment
+                        min_len = min(len(error_ahead_data), len(error_behind_data))
+                        
+                        if min_len > 0:
+                            time_data = error_ahead_data[:min_len, 0]
+                            error_ahead = error_ahead_data[:min_len, 1]
+                            error_behind = error_behind_data[:min_len, 1]
+                            
+                            # Compute gain: k_p * (1/(error_ahead + eps) + 1/(error_behind + eps))
+                            # Note: error_behind is already the phase difference, but we need phase_ego - phase_follower
+                            # From the controller: error_behind = phase_ego - phase_follower
+                            # phase_diff_follower is typically phase_follower - phase_ego, so we negate it
+                            error_behind = -error_behind
+                            
+                            gain = k_p * (1.0 / (error_ahead + eps) + 1.0 / (error_behind + eps))
+                            
+                            # Plot with transparency based on run index
+                            alpha = 0.3 if len(csv_files) > 1 else 1.0
+                            label = f'{labels[drone]}' if run_idx == 0 else None
+                            ax.plot(time_data, gain, '-', color=drone_color, linewidth=1.0, 
+                                   alpha=alpha, label=label, zorder=3)
+                
+                # Process baseline data from seed_40 (single run)
+                baseline_dir = base_dir / 'baseline' / model / speed / 'seed_40'
+                if baseline_dir.exists():
+                    baseline_csv_files = list(baseline_dir.glob('*.csv'))
+                    if len(baseline_csv_files) > 0:
+                        baseline_csv = baseline_csv_files[0]
+                        df_baseline = load_and_crop_csv(baseline_csv)
+                        
+                        if df_baseline is not None and len(df_baseline) > 0:
+                            for drone_idx, drone in enumerate(drones):
+                                drone_color = colors[drone_idx]
+                                
+                                # Get phase_diff columns for this drone from baseline
+                                phase_diff_leader_cols_base = [col for col in df_baseline.columns 
+                                                              if drone in col and 'phase_diff_leader' in col.lower()]
+                                phase_diff_follower_cols_base = [col for col in df_baseline.columns 
+                                                                if drone in col and 'phase_diff_follower' in col.lower()]
+                                
+                                if len(phase_diff_leader_cols_base) > 0 and len(phase_diff_follower_cols_base) > 0:
+                                    phase_diff_leader_col_base = phase_diff_leader_cols_base[0]
+                                    phase_diff_follower_col_base = phase_diff_follower_cols_base[0]
+                                    
+                                    # Get time column
+                                    timestamp_cols = [col for col in df_baseline.columns if 'time' in col.lower() or 'stamp' in col.lower()]
+                                    time_col_base = timestamp_cols[0] if len(timestamp_cols) > 0 else None
+                                    
+                                    # Drop NaNs individually for each column
+                                    # time_data_base = df_baseline[time_col_base].dropna().values
+                                    error_ahead_base_data = df_baseline[[time_col_base, phase_diff_leader_col_base]].dropna().values
+                                    error_behind_base_data = df_baseline[[time_col_base, phase_diff_follower_col_base]].dropna().values
+                                    
+                                    # Use minimum length to ensure alignment
+                                    min_len_base = min(len(error_ahead_base_data), len(error_behind_base_data))
+                                    
+                                    if min_len_base > 0:
+                                        # Extract time and phase diffs
+                                        time_data_base = error_ahead_base_data[:min_len_base, 0]
+                                        error_ahead_base = error_ahead_base_data[:min_len_base, 1]
+                                        error_behind_base = error_behind_base_data[:min_len_base, 1]
+                                        
+                                        # Compute gain (negate error_behind as before)
+                                        error_behind_base = -error_behind_base
+                                        gain_base = k_p * (1.0 / (error_ahead_base + eps) + 1.0 / (error_behind_base + eps))
+                                        
+                                        # Plot baseline as dashed line
+                                        ax.plot(time_data_base, gain_base, '--', color=drone_color, 
+                                               linewidth=1.5, alpha=0.7, zorder=4)
+                
+                # Configure plot
+                ax.grid(True, linestyle=':')
+                # ax.set_ylim(-10, 10)
+                # Let matplotlib auto-scale x-axis based on data
+                ax.set_xlim(0, CROP_DURATION)
+                
+                # Labels
+                if i == 0:
+                    ax.set_title(f'{experiment_labels[j]}', fontweight='bold')
+                if j == 0:
+                    omega_value = speed.split('_')[1]
+                    ax.set_ylabel(rf'$\omega_{{d}} = 0.{omega_value}$ (rad/s)' + '\n\n' + 'Controller Gain')
+                
+                if i == len(speeds) - 1:
+                    ax.set_xlabel('Time (s)')
+                
+                # Add subplot label (a) to (p) - for 4x4 grid
+                subplot_index = i * 4 + j  # 0 to 15
+                subplot_label = chr(97 + subplot_index)  # 'a' to 'p'
+                ax.text(0.98, 0.97, f'({subplot_label})', transform=ax.transAxes,
+                       fontsize=18, fontweight='bold', va='top', ha='right',
+                       bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8, edgecolor='none'))
+                
+                # Add legend to the top-right subplot
+                if i == 0 and j == 3:
+                    ax.legend(loc='lower right', fontsize=14, framealpha=0.9)
+                
+            except Exception as e:
+                print(f"Error plotting gains: speed={speed}, experiment={group}+{model}: {e}")
+                import traceback
+                traceback.print_exc()
+                ax.text(0.5, 0.5, f'Error:\n{str(e)[:50]}', ha='center', va='center', 
+                       transform=ax.transAxes, fontsize=8, color='red')
+    
+    plt.tight_layout(rect=[0, 0, 1, 0.99])
+    
+    # Save figure
+    output_path = plots_dir / 'controller_gains_experiments_montage.png'
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    print(f"\nController gains experiments plot saved to: {output_path}")
+    
+    plt.close()
+
+
 def plot_phase_errors_single_drone(drone='C05'):
     """
     Create a 4x4 montage showing phase errors for a single drone across different experiments.
@@ -1503,44 +2360,64 @@ def plot_3d_trajectories_single_drone(drone='C05'):
 
 
 if __name__ == '__main__':
-    print("=" * 80)
-    print("PLOTTING PHASE DIFFERENCES - GPS GROUP")
-    print("=" * 80)
-    plot_phase_differences()
+    # print("=" * 80)
+    # print("PLOTTING PHASE DIFFERENCES - GPS GROUP")
+    # print("=" * 80)
+    # plot_phase_differences()
     
-    print("\n" + "=" * 80)
-    print("PLOTTING PHASE ERRORS - GPS GROUP")
-    print("=" * 80)
-    plot_phase_errors()
+    # print("\n" + "=" * 80)
+    # print("PLOTTING PHASE ERRORS - GPS GROUP")
+    # print("=" * 80)
+    # plot_phase_errors()
     
-    print("\n" + "=" * 80)
-    print("PLOTTING OMEGA ERRORS - GPS GROUP")
-    print("=" * 80)
-    plot_omega_errors()
+    # print("\n" + "=" * 80)
+    # print("PLOTTING OMEGA ERRORS - GPS GROUP")
+    # print("=" * 80)
+    # plot_omega_errors()
+
+    # print("\n" + "=" * 80)
+    # print("PLOTTING OMEGA ERRORS - EXPERIMENTS")
+    # print("=" * 80)
+    # plot_omega_errors_experiments()
+
+    # print("\n" + "=" * 80)
+    # print("PLOTTING RADIUS ERRORS - EXPERIMENTS")
+    # print("=" * 80)
+    # plot_radius_errors_experiments()
+
+    # print("\n" + "=" * 80)
+    # print("PLOTTING PHASE DIFFERENCE ERRORS - EXPERIMENTS")
+    # print("=" * 80)
+    # plot_phases_differences_errors_experiments()
 
     print("\n" + "=" * 80)
-    print("PLOTTING OMEGA ERRORS - GPS GROUP")
+    print("PLOTTING CONTROLLER GAINS - EXPERIMENTS")
     print("=" * 80)
-    plot_radius_errors()
+    plot_controller_gains_experiments()
+
+    # print("\n" + "=" * 80)
+    # print("PLOTTING OMEGA ERRORS - GPS GROUP")
+    # print("=" * 80)
+    # plot_radius_errors()
     
-    # Plot phase errors for each drone across all experiments
-    for drone in drones:
-        print("\n" + "=" * 80)
-        print(f"PLOTTING PHASE ERRORS FOR {drone} ACROSS EXPERIMENTS")
-        print("=" * 80)
-        plot_phase_errors_single_drone(drone=drone)
+    # # Plot phase errors for each drone across all experiments
+    # for drone in drones:
+    #     print("\n" + "=" * 80)
+    #     print(f"PLOTTING PHASE ERRORS FOR {drone} ACROSS EXPERIMENTS")
+    #     print("=" * 80)
+    #     plot_phase_errors_single_drone(drone=drone)
     
-    # Plot radius errors for each drone across all experiments
-    for drone in drones:
-        print("\n" + "=" * 80)
-        print(f"PLOTTING RADIUS ERRORS FOR {drone} ACROSS EXPERIMENTS")
-        print("=" * 80)
-        plot_radius_errors_single_drone(drone=drone)
+    # # Plot radius errors for each drone across all experiments
+    # for drone in drones:
+    #     print("\n" + "=" * 80)
+    #     print(f"PLOTTING RADIUS ERRORS FOR {drone} ACROSS EXPERIMENTS")
+    #     print("=" * 80)
+    #     plot_radius_errors_single_drone(drone=drone)
     
-    # Plot 3D trajectories for each drone across all experiments
-    for drone in drones:
-        print("\n" + "=" * 80)
-        print(f"PLOTTING 3D TRAJECTORIES FOR {drone} ACROSS EXPERIMENTS")
-        print("=" * 80)
-        plot_3d_trajectories_single_drone(drone=drone)
+    # # Plot 3D trajectories for each drone across all experiments
+    # for drone in drones:
+    #     print("\n" + "=" * 80)
+    #     print(f"PLOTTING 3D TRAJECTORIES FOR {drone} ACROSS EXPERIMENTS")
+    #     print("=" * 80)
+    #     plot_3d_trajectories_single_drone(drone=drone)
 
