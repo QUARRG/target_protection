@@ -170,9 +170,9 @@ class CircleDistortion(Node):
                     self.publish_phase_differences()
 
                     # Sending position command
-                    target_r = np.array([position.pose.pose.position.x,
-                                         position.pose.pose.position.y,
-                                         position.pose.pose.position.z + self.hover_height])
+                    target_r = np.array([position.pose.position.x,
+                                         position.pose.position.y,
+                                         position.pose.position.z + self.hover_height])
                     self.send_position(target_r)
 
                 else:

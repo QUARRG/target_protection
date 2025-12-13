@@ -122,11 +122,16 @@ class CircleDistortion(Node):
             StringArray, '/agents_order',
             self._order_callback,
             10)    
-        
+        # Subscription to Vicon positions to get initial poses for all drones
+        self.create_subscription(
+            PoseStamped, f'/{self.robot}/vicon_position',
+            self._poses_changed,
+            10
+        )
         # Wait until order is received
         while (not self.has_order):
             rclpy.spin_once(self, timeout_sec=0.1)
-
+    
         # Wait until initial pose is received from Vicon
         while (not self.has_initial_pose):
             rclpy.spin_once(self, timeout_sec=0.1)
@@ -144,13 +149,6 @@ class CircleDistortion(Node):
             'frame_id': self.frame_id
         }
         self.filter_gps = FilterGPS(self.robot, self.embedding_fn_name, self.filter_gps_params, self)
-
-        # Subscription to Vicon positions to get initial poses for all drones
-        self.create_subscription(
-            PoseStamped, f'/{self.robot}/vicon_position',
-            self._poses_changed,
-            10
-        )
         
         # Subscribe to Vicon positions of leader and follower for initialization
         self.has_leader_initial_pose = False
@@ -259,9 +257,9 @@ class CircleDistortion(Node):
                 self.phases = [phase_leader.data, phase_ego.data, phase_follower.data]
                 self.publish_phase_differences()
 
-                target_r = np.array([desired_position_ego.pose.pose.position.x,
-                                     desired_position_ego.pose.pose.position.y,
-                                     desired_position_ego.pose.pose.position.z + self.hover_height])
+                target_r = np.array([desired_position_ego.pose.position.x,
+                                     desired_position_ego.pose.position.y,
+                                     desired_position_ego.pose.position.z + self.hover_height])
                 self.send_position(target_r)
             
             # Landing state
@@ -322,8 +320,8 @@ class CircleDistortion(Node):
         phase_follower = self.filter_relative_follower.update(y_follower, Rei, Rci, qi)
 
         # Updating internal parameters
-        self.phases = [phase_leader.data, phase_ego.data, phase_follower.data]
-        self.publish_phase_differences()
+        # self.phases = [phase_leader.data, phase_ego.data, phase_follower.data]
+        # self.publish_phase_differences()
 
         # target_r = np.array([desired_position.pose.pose.position.x,
         #                      desired_position.pose.pose.position.y,
@@ -344,7 +342,7 @@ class CircleDistortion(Node):
             self.initial_radius = np.sqrt(self.initial_pose[0]**2 + self.initial_pose[1]**2)
 
             # Adjusting filter parameters based on initial position
-            self.filter_gps.pub_phase.publish(Float32(data=self.initial_phase))
+            # self.filter_gps.pub_phase.publish(Float32(data=self.initial_phase))
             self.takeoff_traj(4)
             self.has_initial_pose = True    
             
@@ -432,7 +430,7 @@ class CircleDistortion(Node):
         self.r_landing = np.zeros((3, len(self.t_landing)))
         self.r_landing[0,:] += self.final_pose[0] * np.ones(len(self.t_landing))
         self.r_landing[1,:] += self.final_pose[1] * np.ones(len(self.t_landing))
-        self.r_landing[2,:] = self.hover_height * (self.t_landing / t_max)
+        self.r_landing[2,:] = self.final_pose[2] * (self.t_landing / t_max)
 
     def _landing_callback(self, msg):
         ''' Callback to initiate landing procedure. '''

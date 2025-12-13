@@ -129,6 +129,7 @@ class CircleDistortion(Node):
             rclpy.spin_once(self, timeout_sec=0.1)
         
         self.info(f"Initial pose received: phase={self.initial_phase:.3f}, radius={self.initial_radius:.3f}")
+        self.info(f"Covariance matrix P: {P_list}")
 
         # Create filter instance using actual measured initial values
         self.filter_params = {
@@ -194,12 +195,12 @@ class CircleDistortion(Node):
                 phase, current_position, desired_position = self.filter.predict(omega, self.timer_period)
 
                 # Updating internal parameters
-                self.phases[1] = phase.data
-                self.publish_phase_differences()
+                # self.phases[1] = phase.data
+                # self.publish_phase_differences()
 
-                target_r = np.array([desired_position.pose.pose.position.x,
-                                     desired_position.pose.pose.position.y,
-                                     desired_position.pose.pose.position.z + self.hover_height])
+                target_r = np.array([desired_position.pose.position.x,
+                                     desired_position.pose.position.y,
+                                     desired_position.pose.position.z + self.hover_height])
                 self.send_position(target_r)
             
             # Landing state
@@ -267,7 +268,7 @@ class CircleDistortion(Node):
             self.final_pose[0] = robot_pose.pose.position.x
             self.final_pose[1] = robot_pose.pose.position.y
             self.final_pose[2] = robot_pose.pose.position.z
-            self.landing_traj(5)
+            self.landing_traj(3)
             self.has_final = True
 
     def _phase_callback_leader(self, msg: Float32):
