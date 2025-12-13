@@ -7,7 +7,7 @@ from crazyflie_interfaces.msg import StringArray, Position
 from std_msgs.msg import Bool
 from std_srvs.srv import Empty
 from std_msgs.msg import Float32
-from crazy_encirclement.filters import BaselineFilter, wrap_to_2pi
+from crazy_encirclement.filters import BaselineFilter, wrap_to_2pi, wrap_to_pi
 from crazy_encirclement_interfaces.msg import Metadata
 
 
@@ -264,8 +264,8 @@ class CircleDistortion(Node):
 
     def publish_phase_differences(self):
         ''' Publish phase differences to leader and follower. '''
-        diff_leader = wrap_to_2pi(self.phases[0] - self.phases[1])
-        diff_follower = wrap_to_2pi(self.phases[1] - self.phases[2])
+        diff_leader = wrap_to_pi(self.phases[0] - self.phases[1])
+        diff_follower = wrap_to_pi(self.phases[1] - self.phases[2])
         self.publish_phase_diff_leader.publish(Float32(data=diff_leader))
         self.publish_phase_diff_follower.publish(Float32(data=diff_follower))
 

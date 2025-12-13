@@ -125,8 +125,8 @@ def phase_controller(phase_ego, phase_leader, phase_follower, omega_nominal, k_p
     error_behind = phase_ego - phase_follower
 
     # Normalize errors to the range [-pi, pi]
-    error_ahead  = wrap_to_2pi(error_ahead)
-    error_behind = wrap_to_2pi(error_behind)
+    error_ahead  = wrap_to_pi(error_ahead)
+    error_behind = wrap_to_pi(error_behind)
 
     eps = 1e-6  # small constant to avoid division by zero
     gain =  k_p * (1/(error_ahead + eps) + 1/(error_behind + eps))
