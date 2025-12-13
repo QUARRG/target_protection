@@ -8,6 +8,7 @@ from std_msgs.msg import Bool
 from std_srvs.srv import Empty
 from std_msgs.msg import Float32
 from crazy_encirclement.filters import FilterGPS, wrap_to_pi, phase_controller
+from crazy_encirclement_interfaces.msg import Metadata
 
 
 class CircleDistortion(Node):
@@ -163,6 +164,10 @@ class CircleDistortion(Node):
         self.publish_phase_diff_leader = self.create_publisher(Float32, f'/{self.robot}/filtered/phase_diff/leader', 10)
         self.publish_phase_diff_follower = self.create_publisher(Float32, f'/{self.robot}/filtered/phase_diff/follower', 10)
 
+        # Metadata publisher
+        self.metadata_pub = self.create_publisher(Metadata, f'/{self.robot}/metadata', 10)
+        self.metadata_timer = self.create_timer(10.0, self.publish_metadata)
+        
         # input("Press Enter to takeoff")
         self.timer = self.create_timer(self.timer_period, self.timer_callback)
 
@@ -334,6 +339,32 @@ class CircleDistortion(Node):
         self.r_landing[0,:] += self.final_pose[0] * np.ones(len(self.t_landing))
         self.r_landing[1,:] += self.final_pose[1] * np.ones(len(self.t_landing))
         self.r_landing[2,:] = self.final_pose[2] * (self.t_landing / t_max)
+
+    def publish_metadata(self):
+        """Publish experiment metadata every 10 seconds."""
+        metadata = Metadata()
+        metadata.group_name = 'gps'
+        metadata.drone_id = self.robot
+        metadata.seed = int(self.get_parameter('seed').value)
+        metadata.filter_type = 'FilterGPS'
+        metadata.embedding_fn_name = self.embedding_fn_name
+        metadata.frame_id = self.frame_id
+        metadata.radius_nominal = self.radius_nominal
+        metadata.omega_nominal = self.omega_nominal
+        metadata.hover_height = self.hover_height
+        metadata.k_phi = self.k_phi
+        metadata.P_ego = [float(x) for x in self.get_parameter('P').value]
+        metadata.Q_ego = [float(x) for x in self.get_parameter('Q').value]
+        metadata.V_ego = [float(x) for x in self.get_parameter('V').value]
+        metadata.P_rel = []
+        metadata.Q_rel = []
+        metadata.V_rel = []
+        metadata.predict_hz = self.predict_hz
+        metadata.update_hz = self.update_hz
+        metadata.phase_guess = self.initial_phase
+        metadata.radius_guess = self.initial_radius
+        metadata.stamp = self.get_clock().now().to_msg()
+        self.metadata_pub.publish(metadata)
 
     def _landing_callback(self, msg):
         ''' Callback to initiate landing procedure. '''
