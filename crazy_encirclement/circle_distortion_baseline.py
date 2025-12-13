@@ -7,7 +7,7 @@ from crazyflie_interfaces.msg import StringArray, Position
 from std_msgs.msg import Bool
 from std_srvs.srv import Empty
 from std_msgs.msg import Float32
-from crazy_encirclement.filters import BaselineFilter, wrap_to_pi
+from crazy_encirclement.filters import BaselineFilter, wrap_to_2pi
 from crazy_encirclement_interfaces.msg import Metadata
 
 
@@ -209,7 +209,7 @@ class CircleDistortion(Node):
             self.initial_pose[0] = robot_pose.pose.position.x
             self.initial_pose[1] = robot_pose.pose.position.y
             self.initial_pose[2] = robot_pose.pose.position.z   
-            self.initial_phase = wrap_to_pi(np.arctan2(self.initial_pose[1], self.initial_pose[0]))
+            self.initial_phase = wrap_to_2pi(np.arctan2(self.initial_pose[1], self.initial_pose[0]))
             self.initial_radius = np.sqrt(self.initial_pose[0]**2 + self.initial_pose[1]**2)
             self.takeoff_traj(4)
             self.has_initial_pose = True    
@@ -264,8 +264,8 @@ class CircleDistortion(Node):
 
     def publish_phase_differences(self):
         ''' Publish phase differences to leader and follower. '''
-        diff_leader = wrap_to_pi(self.phases[0] - self.phases[1])
-        diff_follower = wrap_to_pi(self.phases[2] - self.phases[1])
+        diff_leader = wrap_to_2pi(self.phases[0] - self.phases[1])
+        diff_follower = wrap_to_2pi(self.phases[1] - self.phases[2])
         self.publish_phase_diff_leader.publish(Float32(data=diff_leader))
         self.publish_phase_diff_follower.publish(Float32(data=diff_follower))
 
@@ -309,12 +309,12 @@ class CircleDistortion(Node):
         metadata.omega_nominal = self.omega_nominal
         metadata.hover_height = self.hover_height
         metadata.k_phi = self.k_phi
-        metadata.P_ego = []
-        metadata.Q_ego = []
-        metadata.V_ego = []
-        metadata.P_rel = []
-        metadata.Q_rel = []
-        metadata.V_rel = []
+        metadata.p_ego = []
+        metadata.q_ego = []
+        metadata.v_ego = []
+        metadata.p_rel = []
+        metadata.q_rel = []
+        metadata.v_rel = []
         metadata.predict_hz = self.predict_hz
         metadata.update_hz = self.update_hz
         metadata.phase_guess = self.initial_phase

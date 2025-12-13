@@ -7,7 +7,7 @@ from crazyflie_interfaces.msg import StringArray, Position
 from std_msgs.msg import Bool
 from std_srvs.srv import Empty
 from std_msgs.msg import Float32
-from crazy_encirclement.filters import FilterGPS, wrap_to_pi, phase_controller
+from crazy_encirclement.filters import FilterGPS, wrap_to_2pi, phase_controller
 from crazy_encirclement_interfaces.msg import Metadata
 
 
@@ -161,6 +161,7 @@ class CircleDistortion(Node):
 
         # Publishers for phase differences
         self.publish_omega = self.create_publisher(Float32, f'/{self.robot}/filtered/omega', 10)
+        self.publish_gain  = self.create_publisher(Float32, f'/{self.robot}/filtered/controller_gain', 10)
         self.publish_phase_diff_leader = self.create_publisher(Float32, f'/{self.robot}/filtered/phase_diff/leader', 10)
         self.publish_phase_diff_follower = self.create_publisher(Float32, f'/{self.robot}/filtered/phase_diff/follower', 10)
 
@@ -191,17 +192,21 @@ class CircleDistortion(Node):
             # Encirclement state
             elif self.state == 2:
                 # Computing desired phi_dot based on the leader and follower phases
-                omega = phase_controller(self.phases[1], self.phases[0], self.phases[2], self.omega_nominal, self.k_phi)
+                omega, gain = phase_controller(self.phases[1], self.phases[0], self.phases[2], self.omega_nominal, self.k_phi)
                 omega_msg = Float32()
                 omega_msg.data = omega
                 self.publish_omega.publish(omega_msg)
+
+                gain_msg = Float32()
+                gain_msg.data = gain
+                self.publish_gain.publish(gain_msg)
 
                 # Propagating the filter (prediction step)
                 phase, current_position, desired_position = self.filter.predict(omega, self.timer_period)
 
                 # Updating internal parameters
-                # self.phases[1] = phase.data
-                # self.publish_phase_differences()
+                self.phases[1] = phase.data
+                self.publish_phase_differences()
 
                 target_r = np.array([desired_position.pose.position.x,
                                      desired_position.pose.position.y,
@@ -234,8 +239,8 @@ class CircleDistortion(Node):
         phase, current_position, desired_position = self.filter.update(y)
 
         # Updating internal parameters
-        self.phases[1] = phase.data
-        self.publish_phase_differences()
+        # self.phases[1] = phase.data
+        # self.publish_phase_differences()
 
         # target_r = np.array([desired_position.pose.pose.position.x,
         #                      desired_position.pose.pose.position.y,
@@ -252,11 +257,10 @@ class CircleDistortion(Node):
             self.initial_pose[0] = robot_pose.pose.position.x
             self.initial_pose[1] = robot_pose.pose.position.y
             self.initial_pose[2] = robot_pose.pose.position.z   
-            self.initial_phase = wrap_to_pi(np.arctan2(self.initial_pose[1], self.initial_pose[0]))   
+            self.initial_phase = wrap_to_2pi(np.arctan2(self.initial_pose[1], self.initial_pose[0]))   
             self.initial_radius = np.sqrt(self.initial_pose[0]**2 + self.initial_pose[1]**2)
 
             # Adjusting filter parameters based on initial position
-
             self.takeoff_traj(4)
             self.has_initial_pose = True    
             
@@ -309,8 +313,8 @@ class CircleDistortion(Node):
 
     def publish_phase_differences(self):
         ''' Publish phase differences to leader and follower. '''
-        diff_leader = wrap_to_pi(self.phases[0] - self.phases[1])
-        diff_follower = wrap_to_pi(self.phases[2] - self.phases[1])
+        diff_leader = wrap_to_2pi(self.phases[0] - self.phases[1])
+        diff_follower = wrap_to_2pi(self.phases[1] - self.phases[2])
         self.publish_phase_diff_leader.publish(Float32(data=diff_leader))
         self.publish_phase_diff_follower.publish(Float32(data=diff_follower))
 
@@ -353,12 +357,12 @@ class CircleDistortion(Node):
         metadata.omega_nominal = self.omega_nominal
         metadata.hover_height = self.hover_height
         metadata.k_phi = self.k_phi
-        metadata.P_ego = [float(x) for x in self.get_parameter('P').value]
-        metadata.Q_ego = [float(x) for x in self.get_parameter('Q').value]
-        metadata.V_ego = [float(x) for x in self.get_parameter('V').value]
-        metadata.P_rel = []
-        metadata.Q_rel = []
-        metadata.V_rel = []
+        metadata.p_ego = [float(x) for x in self.get_parameter('P').value]
+        metadata.q_ego = [float(x) for x in self.get_parameter('Q').value]
+        metadata.v_ego = [float(x) for x in self.get_parameter('V').value]
+        metadata.p_rel = []
+        metadata.q_rel = []
+        metadata.v_rel = []
         metadata.predict_hz = self.predict_hz
         metadata.update_hz = self.update_hz
         metadata.phase_guess = self.initial_phase

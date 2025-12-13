@@ -41,6 +41,11 @@ def wrap_to_pi(angle):
     return np.arctan2(np.sin(angle), np.cos(angle))
 
 
+def wrap_to_2pi(angle):
+    """Wrap angle to [0, 2pi]."""
+    return angle % (2 * np.pi)
+
+
 def skew(v: np.ndarray) -> np.ndarray:
     ''' Skew-symmetric matrix for SO(3)
         v: 1x3, 3x1 or 3, vector
@@ -80,7 +85,6 @@ def build_Rc(phase: float) -> np.ndarray:
     Returns:
         3x3 rotation matrix
     """
-    phase = wrap_to_pi(phase)
     c, s = np.cos(phase), np.sin(phase)
     return np.array([[c, -s, 0],
                      [s,  c, 0],
@@ -107,9 +111,9 @@ def get_phase(Rc: np.ndarray) -> float:
         Rc: 3x3 rotation matrix
     
     Returns:
-        Phase angle in radians, wrapped to [-pi, pi]
+        Phase angle in radians, wrapped to [0, 2pi]
     """
-    return wrap_to_pi(np.arctan2(Rc[1,0], Rc[0,0]))
+    return wrap_to_2pi(np.arctan2(Rc[1,0], Rc[0,0]))
 
 
 def phase_controller(phase_ego, phase_leader, phase_follower, omega_nominal, k_p=1.0):
@@ -121,14 +125,14 @@ def phase_controller(phase_ego, phase_leader, phase_follower, omega_nominal, k_p
     error_behind = phase_ego - phase_follower
 
     # Normalize errors to the range [-pi, pi]
-    error_ahead  = wrap_to_pi(error_ahead)
-    error_behind = wrap_to_pi(error_behind)
+    error_ahead  = wrap_to_2pi(error_ahead)
+    error_behind = wrap_to_2pi(error_behind)
 
     eps = 1e-6  # small constant to avoid division by zero
+    gain =  k_p * (1/(error_ahead + eps) + 1/(error_behind + eps))
+    control_signal = omega_nominal + gain
 
-    control_signal = omega_nominal + k_p * (1/(error_ahead + eps) + 1/(error_behind + eps))
-
-    return control_signal
+    return control_signal, gain
 # ----------------------------------------------------------------------
 
 
@@ -147,7 +151,7 @@ class BaseFilter:
         self.P: np.ndarray  = np.diag(np.square(self.params.get('P', np.zeros(4))))
         self.Q: np.ndarray  = np.diag(np.square(self.params.get('Q', np.zeros(4))))
         self.V: np.ndarray  = np.diag(np.square(self.params.get('V', np.zeros(3))))
-        self.Rc: np.ndarray = build_Rc(wrap_to_pi(self.params.get('phase_guess', 0.0)))
+        self.Rc: np.ndarray = build_Rc(wrap_to_2pi(self.params.get('phase_guess', 0.0)))
         self.radius: float  = self.params.get('radius_guess', 2.0)
         self.radius_nominal: float = self.params.get('radius_nominal', 2.0)
         self.e_x: np.ndarray = np.asarray([[1.], [0.], [0.]])
@@ -294,7 +298,7 @@ class FilterRelative(BaseFilter):
         self.P: np.ndarray  = np.diag(np.square(self.params.get('P', np.zeros(3))))
         self.Q: np.ndarray  = np.diag(np.square(self.params.get('Q', np.zeros(3))))
         self.V: np.ndarray  = np.diag(np.square(self.params.get('V', np.zeros(3))))
-        self.Rc: np.ndarray = build_Rc(wrap_to_pi(self.params.get('phase_guess', 0.0)))
+        self.Rc: np.ndarray = build_Rc(wrap_to_2pi(self.params.get('phase_guess', 0.0)))
         self.radius: float  = self.params.get('radius_guess', 2.0)
         self.radius_nominal: float = self.params.get('radius_nominal', 2.0)
         self.s: float = np.log(self.radius)
@@ -369,12 +373,13 @@ class BaselineFilter(BaseFilter):
         self.radius_nominal: float = self.params.get('radius_nominal', 2.0)
 
         self.s: float = np.log(self.radius)
-        self.Rc: np.ndarray = build_Rc(wrap_to_pi(self.params.get('phase_guess', 0.0)))
+        self.Rc: np.ndarray = build_Rc(wrap_to_2pi(self.params.get('phase_guess', 0.0)))
         self.dt : float = self.params.get('dt', 0.1)
         self.e_x: np.ndarray = np.asarray([[1.], [0.], [0.]])
 
         # Publishers
         self.pub_omega  = self.node.create_publisher(Float32, f'/{self.name}/baseline/omega', 10)
+        self.pub_gain   = self.node.create_publisher(Float32, f'/{self.name}/baseline/controller_gain', 10)
         self.pub_pose   = self.node.create_publisher(PoseWithCovarianceStamped, f'/{self.name}/baseline/pose', 10)
         self.pub_phase  = self.node.create_publisher(Float32, f'/{self.name}/baseline/phase', 10)
         self.pub_radius = self.node.create_publisher(Float32, f'/{self.name}/baseline/radius', 10)
@@ -387,12 +392,12 @@ class BaselineFilter(BaseFilter):
         p = Rc.T @ Re.T @ current_pose
         # curr_ego_phase = np.arctan2(p[1], p[0])
         self.radius  = np.sqrt(p[0]**2 + p[1]**2 + p[2]**2)
-        omega = phase_controller(prev_ego_phase, prev_leader_phase, prev_follower_phase, self.omega_nominal, self.k_phi)
+        omega, gain = phase_controller(prev_ego_phase, prev_leader_phase, prev_follower_phase, self.omega_nominal, self.k_phi)
         # Update phase
         self.Rc = exp_SO3(np.asarray([0., 0., omega * self.dt])) @ self.Rc
         self.Rc = orthonormalize(self.Rc)
         
-        # Publish predicted pose and phase
+        # Publish predicted pose, phase and controller gain
         current_pose_msg, desired_pose_msg, phase_msg, radius_msg = self.build_pose_phase_msgs()
         self.pub_pose.publish(current_pose_msg)
         self.pub_phase.publish(phase_msg)
@@ -401,6 +406,10 @@ class BaselineFilter(BaseFilter):
         omega_msg = Float32()
         omega_msg.data = omega
         self.pub_omega.publish(omega_msg)
+
+        gain_msg = Float32()
+        gain_msg.data = gain
+        self.pub_gain.publish(gain_msg)
 
         return phase_msg, desired_pose_msg
 # ----------------------------------------------------------------------
