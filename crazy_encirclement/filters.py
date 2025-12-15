@@ -402,7 +402,7 @@ class BaselineFilter(BaseFilter):
 
         omega, gain = phase_controller(current_ego_phase, prev_leader_phase, prev_follower_phase, self.omega_nominal, self.k_phi)
         # Update phase
-        self.Rc = exp_SO3(np.asarray([0., 0., omega * self.dt])) @ self.Rc
+        self.Rc = exp_SO3(np.asarray([0., 0., omega * self.dt])) @ Rc
         self.Rc = orthonormalize(self.Rc)
         
         
