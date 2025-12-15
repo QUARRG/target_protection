@@ -396,11 +396,14 @@ class BaselineFilter(BaseFilter):
         # Update phase
         self.Rc = exp_SO3(np.asarray([0., 0., omega * self.dt])) @ self.Rc
         self.Rc = orthonormalize(self.Rc)
-        
+        pose = Re.T @ current_pose
+        current_phase = np.arctan2(pose[1], pose[0])
         # Publish predicted pose, phase and controller gain
         current_pose_msg, desired_pose_msg, phase_msg, radius_msg = self.build_pose_phase_msgs()
+        phase_msg_test = Float32()
+        phase_msg_test.data = current_phase
         self.pub_pose.publish(current_pose_msg)
-        self.pub_phase.publish(phase_msg)
+        self.pub_phase.publish(phase_msg_test)
         self.pub_radius.publish(radius_msg)
 
         omega_msg = Float32()
@@ -411,5 +414,5 @@ class BaselineFilter(BaseFilter):
         gain_msg.data = gain
         self.pub_gain.publish(gain_msg)
 
-        return phase_msg, desired_pose_msg
+        return phase_msg_test, desired_pose_msg
 # ----------------------------------------------------------------------
