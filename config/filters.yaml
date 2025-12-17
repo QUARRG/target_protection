@@ -6,14 +6,14 @@ FilterGPS:
   V: [0.1, 0.1, 0.1]
   predict_hz: 100.0
   update_hz: 10.0
-  seed: 40
+  seed: 60
   # Parameters for circle distortion
-  embedding_fn_name: modelE
+  embedding_fn_name: modelA
   frame_id: world
-  hover_height: 0.5  # meters
+  hover_height: 0.8  # meters
   radius_nominal: 1.0  # meters
-  omega_nominal: 0.8   # radians per second
-  k_phi: 0.3
+  omega_nominal: 0.2   # radians per second
+  k_phi: 5.0
 
 FilterRelative:
   # Kalman filter parameters
@@ -25,11 +25,11 @@ FilterRelative:
   V_rel: [0.1, 0.1, 0.1]
   predict_hz: 100.0
   update_hz: 10.0
-  seed: 40
+  seed: 60
   # Parameters for circle distortion
-  embedding_fn_name: modelA
+  embedding_fn_name: modelC
   frame_id: world
-  hover_height: 0.8 # meters
+  hover_height: 1.0 # meters
   radius_nominal: 1.0  # meters
-  omega_nominal: 0.8   # radians per second
-  k_phi: 0.3
+  omega_nominal: 0.2   # radians per second
+  k_phi: 10.0

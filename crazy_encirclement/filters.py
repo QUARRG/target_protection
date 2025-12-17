@@ -23,6 +23,8 @@ def omega_func_modelD(theta: float) -> np.ndarray:
 
 def omega_func_modelE(theta: float) -> np.ndarray:
     return np.asarray([0.0, 0.0, 0.])
+def omega_func_modelF(theta: float) -> np.ndarray:
+    return np.asarray([0.4 * (np.cos(theta) * np.sin(theta)-np.sin(theta)**3), 0.4*np.cos(theta)**2*np.sin(-theta), 0.])
 REGISTRED_OMEGA_FUNCTIONS = {
     'modelA': omega_func_modelA,
     'modelB': omega_func_modelB,
@@ -390,17 +392,26 @@ class BaselineFilter(BaseFilter):
         Re = build_Re(self.embedding_fn, prev_ego_phase)
         Rc = build_Rc(prev_ego_phase)
         p = Rc.T @ Re.T @ current_pose
-        # curr_ego_phase = np.arctan2(p[1], p[0])
         self.radius  = np.sqrt(p[0]**2 + p[1]**2 + p[2]**2)
-        omega, gain = phase_controller(prev_ego_phase, prev_leader_phase, prev_follower_phase, self.omega_nominal, self.k_phi)
+
+        pose = Re.T @ current_pose
+        current_ego_phase = wrap_to_2pi(np.arctan2(pose[1], pose[0]))
+        Rc = build_Rc(current_ego_phase)
+
+        # curr_ego_phase = np.arctan2(p[1], p[0])
+
+        omega, gain = phase_controller(current_ego_phase, prev_leader_phase, prev_follower_phase, self.omega_nominal, self.k_phi)
         # Update phase
-        self.Rc = exp_SO3(np.asarray([0., 0., omega * self.dt])) @ self.Rc
+        self.Rc = exp_SO3(np.asarray([0., 0., omega * self.dt])) @ Rc
         self.Rc = orthonormalize(self.Rc)
+        
         
         # Publish predicted pose, phase and controller gain
         current_pose_msg, desired_pose_msg, phase_msg, radius_msg = self.build_pose_phase_msgs()
+        phase_msg_test = Float32()
+        phase_msg_test.data = current_ego_phase
         self.pub_pose.publish(current_pose_msg)
-        self.pub_phase.publish(phase_msg)
+        self.pub_phase.publish(phase_msg_test)
         self.pub_radius.publish(radius_msg)
 
         omega_msg = Float32()
@@ -411,5 +422,5 @@ class BaselineFilter(BaseFilter):
         gain_msg.data = gain
         self.pub_gain.publish(gain_msg)
 
-        return phase_msg, desired_pose_msg
+        return phase_msg_test, desired_pose_msg
 # ----------------------------------------------------------------------
