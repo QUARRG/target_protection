@@ -57,8 +57,6 @@ class CircleDistortion(Node):
         # Flags and variables
         self.timer_period = 1.0 / self.predict_hz
         self.initial_phase = 0.0
-        self.previous_phase = 0.0
-        self.previous_phase_time = 0.0
         self.initial_pose = np.zeros(3)
         self.order = []
 
@@ -71,6 +69,8 @@ class CircleDistortion(Node):
 
         self.final_pose   = np.zeros(3)
         self.current_pose = np.zeros(3)
+        self.previous_pose = np.zeros(3)
+        self.previous_pose_time = 0.0
         self.initial_pose = np.zeros(3)
         
         self.leader   = None
@@ -140,7 +140,9 @@ class CircleDistortion(Node):
         # Publishers for phase differences
         self.publish_phase_diff_leader   = self.create_publisher(Float32, f'/{self.robot}/baseline/phase_diff/leader', 10)
         self.publish_phase_diff_follower = self.create_publisher(Float32, f'/{self.robot}/baseline/phase_diff/follower', 10)
-        self.publish_estimated_omega     = self.create_publisher(Float32, f'/{self.robot}/baseline/estimated_omega', 10)
+        self.publish_estimated_omega_x   = self.create_publisher(Float32, f'/{self.robot}/baseline/measured/omega/x', 10)
+        self.publish_estimated_omega_y   = self.create_publisher(Float32, f'/{self.robot}/baseline/measured/omega/y', 10)
+        self.publish_estimated_omega_z   = self.create_publisher(Float32, f'/{self.robot}/baseline/measured/omega/z', 10)
 
         # Metadata publisher
         self.metadata_pub = self.create_publisher(Metadata, f'/{self.robot}/metadata', 10)
@@ -214,8 +216,8 @@ class CircleDistortion(Node):
             self.initial_pose[2] = robot_pose.pose.position.z   
             self.initial_phase = wrap_to_2pi(np.arctan2(self.initial_pose[1], self.initial_pose[0]))
             self.initial_radius = np.sqrt(self.initial_pose[0]**2 + self.initial_pose[1]**2)
-            self.previous_phase = self.initial_phase
-            self.previous_phase_time = robot_pose.header.stamp.sec + robot_pose.header.stamp.nanosec * 1e-9
+            self.previous_pose = self.initial_pose.copy()
+            self.previous_pose_time = robot_pose.header.stamp.sec + robot_pose.header.stamp.nanosec * 1e-9
             self.takeoff_traj(4)
             self.has_initial_pose = True    
             
@@ -225,13 +227,15 @@ class CircleDistortion(Node):
             self.current_pose[1] = robot_pose.pose.position.y
             self.current_pose[2] = robot_pose.pose.position.z
 
-            # Estimate omega and publish
-            curr_phase = wrap_to_2pi(np.arctan2(self.current_pose[1], self.current_pose[0]))
-            current_time = robot_pose.header.stamp.sec + robot_pose.header.stamp.nanosec * 1e-9
-            delta_phase = wrap_to_pi(curr_phase - self.previous_phase) / (current_time - self.previous_phase_time)
-            self.previous_phase_time = current_time
-            self.previous_phase = curr_phase
-            self.publish_estimated_omega.publish(Float32(data=delta_phase))
+            # Estimate 3D omega using the delta pose and velocity cross product
+            delta_pose = self.current_pose - self.previous_pose
+            delta_velocity = delta_pose / ( (robot_pose.header.stamp.sec + robot_pose.header.stamp.nanosec * 1e-9) - self.previous_pose_time )
+            omega_3D = np.cross(self.previous_pose, delta_velocity) / (np.linalg.norm(self.previous_pose)**2 + 1e-6)
+            self.previous_pose = self.current_pose.copy()
+            self.previous_pose_time = robot_pose.header.stamp.sec + robot_pose.header.stamp.nanosec * 1e-9
+            self.publish_estimated_omega_x.publish(Float32(data=omega_3D[0]))
+            self.publish_estimated_omega_y.publish(Float32(data=omega_3D[1]))
+            self.publish_estimated_omega_z.publish(Float32(data=omega_3D[2]))
 
         # Set final pose when landing is commanded
         elif (self.has_final == False) and (self.land_flag == True):
