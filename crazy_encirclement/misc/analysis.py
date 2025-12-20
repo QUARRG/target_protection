@@ -19,9 +19,33 @@ from crazy_encirclement.filters import wrap_to_pi
 base_dir = Path('/home/paulo/Documents/k_10/')
 plots_dir = base_dir / 'plots'
 plots_dir.mkdir(exist_ok=True)
-groups = ['baseline', 'gps', 'relative']
-models = ['modelA', 'modelC']
-model_labels = ['Model A', 'Model B']
+# groups = ['baseline', 'gps', 'relative']
+groups_list = [
+    # 'baseline',
+    # 'gps',
+    # 'relative',
+    # 'total_outage_wind_mild',
+    'total_outage_wind_strong',
+    # 'combined_wind_mild',
+    'combined_wind_strong'
+    ]
+group_labels = [
+    # 'Filter 1 (Outage and mild wind)',
+    'Filter 1 (Outage and strong wind)',
+    # 'Filter 1 + 2 (Outage and mild wind)',
+    'Filter 1 + 2 (Outage and strong wind)',
+    ]
+
+models = [
+    'modelA',
+    # 'modelC'
+    ]
+model_labels = [
+    'Model A',
+    # 'Model B'
+    ]
+
+# Group labels for columns
 speeds = ['0_2']
 drones = ['C14', 'C05', 'C04']
 colormap_name = 'gist_rainbow'  # Can be changed to: 'plasma', 'inferno', 'magma', 'cividis', 'tab10', etc.
@@ -218,17 +242,14 @@ def plot_phases_differences_errors_experiments():
     Shows ±5 deg confidence bounds and computes settling time.
     """
     n_models = len(models)
-    n_groups = 3  # baseline, gps, relative
-    fig, axes = plt.subplots(n_models, n_groups, figsize=(18, 8), sharex=True, sharey=True)
+    n_groups = len(groups_list)
+    x_size = 6 * n_groups
+    y_size = 5 * n_models
+    fig, axes = plt.subplots(n_models, n_groups, figsize=(x_size, y_size), sharex=True, sharey=True)
     
     # Nominal phase difference (120 degrees = 2π/3 radians)
     nominal_phase_diff_deg = 120.0  # degrees
-    confidence_bound = 5.0  # ±5 degrees
-    
-    # Group labels for columns
-    group_labels = ['Baseline', 'Filter 1 (GPS)', 'Filter 2 (Relative)']
-    groups_list = ['baseline', 'gps', 'relative']
-    
+    confidence_bound = 5.0  # ±5 degrees    
     speed = speeds[0]  # Using only one speed for now
     
     for i_model, model in enumerate(models):
@@ -372,11 +393,11 @@ def compute_phase_diff_settling_summary():
     # Store data for all models/groups/drones
     settling_summary = {model: {group: {drone: {'enter': None, 'stabilize': None, 'percent': None} 
                                        for drone in drones} 
-                               for group in groups} 
+                               for group in groups_list} 
                        for model in models}
     
     for model in models:
-        for group in groups:            
+        for group in groups_list:            
             csv_files = find_csv_files(group, model, speed)
             csv_files = [f for f in csv_files if 'processed' in f.name]
             
@@ -458,38 +479,29 @@ def compute_phase_diff_settling_summary():
     print("SUMMARY TABLE - Phase Difference Settling Times")
     print("=" * 140)
     
-    for group in groups:
+    for group in groups_list:
         print(f"\n{group.upper()}:")
         
         # Combined comprehensive table for this group
         table_data_combined = []
-        for drone in drones:
-            enter_a = settling_summary['modelA'][group][drone]['enter']
-            stabilize_a = settling_summary['modelA'][group][drone]['stabilize']
-            percent_a = settling_summary['modelA'][group][drone]['percent']
-            
-            enter_c = settling_summary['modelC'][group][drone]['enter']
-            stabilize_c = settling_summary['modelC'][group][drone]['stabilize']
-            percent_c = settling_summary['modelC'][group][drone]['percent']
-            
-            enter_a_str = f"{enter_a:.2f}" if enter_a is not None else "N/A"
-            stabilize_a_str = f"{stabilize_a:.2f}" if stabilize_a is not None else "N/A"
-            percent_a_str = f"{percent_a:.1f}%" if percent_a is not None else "N/A"
-            
-            enter_c_str = f"{enter_c:.2f}" if enter_c is not None else "N/A"
-            stabilize_c_str = f"{stabilize_c:.2f}" if stabilize_c is not None else "N/A"
-            percent_c_str = f"{percent_c:.1f}%" if percent_c is not None else "N/A"
-            
-            table_data_combined.append([
-                labels[drone],
-                enter_a_str, stabilize_a_str, percent_a_str,
-                enter_c_str, stabilize_c_str, percent_c_str
-            ])
+        for model in models:
+            for drone in drones:
+                enter = settling_summary[model][group][drone]['enter']
+                stabilize = settling_summary[model][group][drone]['stabilize']
+                percent = settling_summary[model][group][drone]['percent']
+                
+                enter_str = f"{enter:.2f}" if enter is not None else "N/A"
+                stabilize_str = f"{stabilize:.2f}" if stabilize is not None else "N/A"
+                percent_str = f"{percent:.1f}%" if percent is not None else "N/A"
+                
+                table_data_combined.append([
+                    labels[drone],
+                    enter_str, stabilize_str, percent_str
+                ])
         
         headers = [
             'Drone',
-            'ModelA\nEnter (s)', 'ModelA\nStabilize (s)', 'ModelA\nIn Bounds (%)',
-            'ModelC\nEnter (s)', 'ModelC\nStabilize (s)', 'ModelC\nIn Bounds (%)'
+            f'{model}\nEnter (s)', f'{model}\nStabilize (s)', f'{model}\nIn Bounds (%)'
         ]
         print(tabulate(table_data_combined, headers=headers, tablefmt='grid', stralign='center'))
 
@@ -501,12 +513,10 @@ def plot_omega_errors_experiments():
     Columns: groups (baseline, gps/Filter1, relative/Filter2)
     """
     n_models = len(models)
-    n_groups = 3  # baseline, gps, relative
-    fig, axes = plt.subplots(n_models, n_groups, figsize=(18, 8), sharex=True, sharey=True)
-    
-    # Group labels for columns
-    group_labels = ['Baseline', 'Filter 1 (GPS)', 'Filter 2 (Relative)']
-    groups_list = ['baseline', 'gps', 'relative']
+    n_groups = len(groups_list)
+    x_size = 6 * n_groups
+    y_size = 5 * n_models
+    fig, axes = plt.subplots(n_models, n_groups, figsize=(x_size, y_size), sharex=True, sharey=True)
     
     # Nominal omega values
     nominal_omegas = {
@@ -645,11 +655,11 @@ def compute_itae_summary():
     nominal_omega = nominal_omegas[speed]
     
     # Create a summary dictionary
-    itae_summary = {model: {group: {drone: [] for drone in drones} for group in groups} 
+    itae_summary = {model: {group: {drone: [] for drone in drones} for group in groups_list} 
                     for model in models}
     
     for model in models:
-        for group in groups:           
+        for group in groups_list:           
             csv_files = find_csv_files(group, model, speed)
             
             if len(csv_files) == 0:
@@ -711,27 +721,28 @@ def compute_itae_summary():
     print("SUMMARY TABLE - ITAE Values (Time-Weighted Absolute Error)")
     print("=" * 140)
     
-    for group in groups:
+    for group in groups_list:
         print(f"\n{group.upper()}:")
         
         table_data = []
-        for drone in drones:
-            itae_a = itae_summary['modelA'][group].get(drone, 0)
-            itae_c = itae_summary['modelC'][group].get(drone, 0)
-            
-            if itae_a > 0:
-                ratio = itae_c / itae_a
-            else:
-                ratio = 0
-            
-            table_data.append([
-                labels[drone],
-                f"{itae_a:.4f}",
-                f"{itae_c:.4f}",
-                f"{ratio:.2f}x"
-            ])
+        for model in models:
+            for drone in drones:
+                itae = itae_summary[model][group].get(drone, 0)
+                
+                table_data.append([
+                    labels[drone],
+                    f"{itae:.4f}"
+                ])
         
-        print(tabulate(table_data, headers=['Drone', 'ModelA', 'ModelC', 'Ratio (C/A)'], 
+        headers = [
+            'Drone',
+        ]
+        for model in models:
+            model_label = model_labels[models.index(model)]
+            headers.extend([
+                f'{model_label}'
+            ])
+        print(tabulate(table_data, headers=headers, 
                       tablefmt='grid', stralign='center'))
 
 
@@ -747,11 +758,11 @@ def compute_phase_diff_variance_snapshots():
     # Store variance data: {model: {group: {drone: {t: {'mean': ..., 'std': ...}}}}}
     variance_summary = {model: {group: {drone: {t: {'mean': None, 'std': None} for t in time_snapshots} 
                                        for drone in drones} 
-                               for group in groups} 
+                               for group in groups_list} 
                        for model in models}
     
     for model in models:
-        for group in groups:
+        for group in groups_list:
             for drone in drones:
                 csv_files = find_csv_files(group, model, speed)
                 csv_files = [f for f in csv_files if 'processed' in f.name]
@@ -833,40 +844,37 @@ def compute_phase_diff_variance_snapshots():
     print("SUMMARY TABLE - Phase Difference Error Variance (Standard Deviation)")
     print("=" * 140)
     
-    for group in groups:
+    for group in groups_list:
         print(f"\n{group.upper()}:")
         
         table_data = []
-        for drone in drones:
-            std_20_a = variance_summary['modelA'][group][drone][20.0]
-            std_40_a = variance_summary['modelA'][group][drone][40.0]
-            std_60_a = variance_summary['modelA'][group][drone][60.0]
-            
-            std_20_c = variance_summary['modelC'][group][drone][20.0]
-            std_40_c = variance_summary['modelC'][group][drone][40.0]
-            std_60_c = variance_summary['modelC'][group][drone][60.0]
-            
-            # Format as "mean ± std" for each snapshot
-            def fmt_error_std(data_dict):
-                if data_dict is None or data_dict['mean'] is None:
-                    return "N/A"
-                return f"{data_dict['mean']:+.2f}°±{data_dict['std']:.2f}°"
-            
-            table_data.append([
-                labels[drone],
-                fmt_error_std(std_20_a),
-                fmt_error_std(std_40_a),
-                fmt_error_std(std_60_a),
-                fmt_error_std(std_20_c),
-                fmt_error_std(std_40_c),
-                fmt_error_std(std_60_c)
-            ])
+        for model in models:
+            for drone in drones:
+                std_20 = variance_summary[model][group][drone][20.0]
+                std_40 = variance_summary[model][group][drone][40.0]
+                std_60 = variance_summary[model][group][drone][60.0]
+                
+                # Format as "mean ± std" for each snapshot
+                def fmt_error_std(data_dict):
+                    if data_dict is None or data_dict['mean'] is None:
+                        return "N/A"
+                    return f"{data_dict['mean']:+.2f}°±{data_dict['std']:.2f}°"
+                
+                table_data.append([
+                    labels[drone],
+                    fmt_error_std(std_20),
+                    fmt_error_std(std_40),
+                    fmt_error_std(std_60),
+                ])
         
         headers = [
             'Drone',
-            'ModelA\n20s', 'ModelA\n40s', 'ModelA\n60s',
-            'ModelC\n20s', 'ModelC\n40s', 'ModelC\n60s'
         ]
+        for model in models:
+            model_label = model_labels[models.index(model)]
+            headers.extend([
+                f'{model_label}\n20s', f'{model_label}\n40s', f'{model_label}\n60s'
+            ])
         print(tabulate(table_data, headers=headers, tablefmt='grid', stralign='center'))
 
 

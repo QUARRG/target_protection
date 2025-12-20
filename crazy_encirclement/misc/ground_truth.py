@@ -24,7 +24,15 @@ plt.rcParams.update({'text.usetex': True, 'font.size': 20, 'figure.dpi': 150})
 base_dir = Path('/home/paulo/Documents/k_10/')
 plots_dir = base_dir / 'plots'
 plots_dir.mkdir(exist_ok=True)
-groups = ['baseline', 'gps', 'relative']
+groups = ['baseline',
+          'gps',
+          'relative',
+        #   'combined',
+        #   'combined_wind_mild',
+          'combined_wind_strong',
+        #   'total_outage',
+        #   'total_outage_wind_mild',
+          'total_outage_wind_strong']
 models = ['modelA', 'modelC']
 speeds = ['0_2']
 k_phi = 10.0
@@ -266,16 +274,16 @@ def compute_measured_phases(csv_path, z_offset, embedding_fn=None):
         # assign computed phases back into original dataframe by index
         indices = sorted(phases_by_index.keys())
         df.loc[indices, measured_col] = [phases_by_index[i] for i in indices]
-        print(f"Computed measured phases for drone {drone} ({len(indices)} samples) in {csv_path.name}")
+        # print(f"Computed measured phases for drone {drone} ({len(indices)} samples) in {csv_path.name}")
 
     # Save processed csv
     out_dir = csv_path.parent
     out_file = out_dir / 'processed.csv'
     try:
         df.to_csv(out_file, index=False)
-        print(f"Saved processed CSV to: {out_file}")
+        print(f"      Saved processed CSV to: {out_file}")
     except Exception as e:
-        print(f"Error saving processed CSV: {e}")
+        print(f"      Error saving processed CSV: {e}")
         return False
 
     return True
@@ -291,10 +299,13 @@ def process_all_experiments(groups_to_process=None, models_to_process=None, spee
     speeds_sel = speeds_to_process if speeds_to_process is not None else speeds
 
     for group in groups_sel:
+        print(f"\nProcessing group: {group}")
         for model in models_sel:
+            print(f"  Model: {model}")
             embedding_fn = omega_func_modelA if model == 'modelA' else omega_func_modelC
             z_offset = 0.8 if model == 'modelA' else 1.0
             for speed in speeds_sel:
+                print(f"    Speed: {speed}")
                 csv_files = find_csv_files(group, model, speed)
                 for csv in csv_files:
                     compute_measured_phases(csv, z_offset, embedding_fn)
