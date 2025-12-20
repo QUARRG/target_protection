@@ -2,868 +2,886 @@
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend
 import matplotlib.pyplot as plt
+import pandas as pd
 import numpy as np
 from pathlib import Path
 import warnings
-from collections import defaultdict
+from tabulate import tabulate
 
-# ROS2 imports
-import rclpy
-from rclpy.serialization import deserialize_message
-from rosidl_runtime_py.utilities import get_message
-import rosbag2_py
+warnings.filterwarnings('ignore')
 
+plt.rcParams.update({'text.usetex': True, 'font.size': 20, 'figure.dpi': 150})
 
-# Suppress the Axes3D import warning
-warnings.filterwarnings('ignore', message='Unable to import Axes3D')
+# helpers
+from crazy_encirclement.filters import wrap_to_pi
 
 # Configuration
-base_dir = Path('/home/paulo/Documents/bags_filter')
-drones = ['C04', 'C05', 'C14']
+base_dir = Path('/home/paulo/Documents/k_10/')
+plots_dir = base_dir / 'plots'
+plots_dir.mkdir(exist_ok=True)
+groups = ['baseline', 'gps', 'relative']
+models = ['modelA', 'modelC']
+model_labels = ['Model A', 'Model B']
+speeds = ['0_2']
+drones = ['C14', 'C05', 'C04']
+colormap_name = 'gist_rainbow'  # Can be changed to: 'plasma', 'inferno', 'magma', 'cividis', 'tab10', etc.
+labels = {
+    'C04': 'Quadcopter 3',
+    'C05': 'Quadcopter 2',
+    'C14': 'Quadcopter 1'
+}
 
-models = ['modelA_0_8', 'modelA_0_6', 'modelA_0_4', 'modelA_0_2']
-# models = ['modelC_0_8', 'modelC_0_6', 'modelC_0_4', 'modelC_0_2']
+# Global color mapping: drones[0] -> colors[0], drones[1] -> colors[1], drones[2] -> colors[2]
+cmap = plt.get_cmap(colormap_name)
+colors = [cmap(i) for i in [0.125, 0.65, 0.9]]  # [Quadcopter 1, Quadcopter 2, Quadcopter 3]
 
-# # Model A - Filter GPS
-# data_paths = {
-#     'modelA_0_2': {
-#         'baseline': 'baselines/modelA/rosbag2_2025_11_20-17_44_22',
-#         'filtered': 'experiments_gps/modelA/rosbag2_2025_11_25-15_44_48'
-#     },
-#     'modelA_0_4': {
-#         'baseline': 'baselines/modelA/rosbag2_2025_11_20-17_46_36',
-#         'filtered': 'experiments_gps/modelA/rosbag2_2025_11_25-15_38_20'
-#     },
-#     'modelA_0_6': {
-#         'baseline': 'baselines/modelA/rosbag2_2025_11_20-17_49_09',
-#         'filtered': 'experiments_gps/modelA/rosbag2_2025_11_25-15_34_11'
-#     },
-#     'modelA_0_8': {
-#         'baseline': 'baselines/modelA/rosbag2_2025_11_20-17_51_13',
-#         'filtered': 'experiments_gps/modelA/rosbag2_2025_11_25-15_32_20'
-#     }
-# }
+# Duration to crop after encircle flag (in seconds)
+CROP_DURATION = 60.0
 
-
-# Model A - Filter Relative
-data_paths = {
-    'modelA_0_2': {
-        'baseline': 'baselines/modelA/rosbag2_2025_11_20-17_44_22',
-        'filtered': 'relative/modelA_45/rosbag2_2025_12_01-10_22_32'
-    },
-    'modelA_0_4': {
-        'baseline': 'baselines/modelA/rosbag2_2025_11_20-17_46_36',
-        'filtered': 'relative/modelA_45/rosbag2_2025_12_01-10_20_47'
-    },
-    'modelA_0_6': {
-        'baseline': 'baselines/modelA/rosbag2_2025_11_20-17_49_09',
-        'filtered': 'relative/modelA_45/rosbag2_2025_12_01-10_18_47'
-    },
-    'modelA_0_8': {
-        'baseline': 'baselines/modelA/rosbag2_2025_11_20-17_51_13',
-        'filtered': 'relative/modelA_45/rosbag2_2025_12_01-10_16_36'
-    }
+# Drone relationships: ego -> (follower, leader)
+DRONE_RELATIONSHIPS = {
+    'C05': ('C14', 'C04'),
+    'C04': ('C05', 'C14'),
+    'C14': ('C04', 'C05')
 }
 
 
-
-# Model C - Filter Relative
-# data_paths = {
-#     'modelC_0_2': {
-#         'baseline': 'baselines/modelC/rosbag2_2025_11_20-18_05_28',
-#         'filtered': 'experiments_relative/modelC/rosbag2_2025_11_25-16_15_19'
-#     },
-#     'modelC_0_4': {
-#         'baseline': 'baselines/modelC/rosbag2_2025_11_20-18_08_37',
-#         'filtered': 'experiments_relative/modelC/rosbag2_2025_11_25-16_17_42'
-#     },
-#     'modelC_0_6': {
-#         'baseline': 'baselines/modelC/rosbag2_2025_11_20-18_10_12',
-#         'filtered': 'experiments_relative/modelC/rosbag2_2025_11_25-16_19_44'
-#     },
-#     'modelC_0_8': {
-#         'baseline': 'baselines/modelC/rosbag2_2025_11_20-18_12_18',
-#         'filtered': 'experiments_relative/modelC/rosbag2_2025_11_25-16_21_44'
-#     }
-# }
-
-
-def read_bag(bag_path):
-    """Read ROS2 bag and extract relevant data."""
-    storage_options = rosbag2_py.StorageOptions(uri=str(bag_path), storage_id='sqlite3')
-    converter_options = rosbag2_py.ConverterOptions(
-        input_serialization_format='cdr',
-        output_serialization_format='cdr'
-    )
-    
-    reader = rosbag2_py.SequentialReader()
-    reader.open(storage_options, converter_options)
-    
-    topic_types = reader.get_all_topics_and_types()
-    type_map = {topic.name: topic.type for topic in topic_types}
-    
-    data = defaultdict(list)
-    
-    while reader.has_next():
-        (topic, raw_data, t) = reader.read_next()
-        
-        if topic not in type_map:
-            continue
-            
-        msg_type = get_message(type_map[topic])
-        msg = deserialize_message(raw_data, msg_type)
-        
-        # Store encircle flag
-        if topic == '/encircle':
-            data['/encircle'].append({'time': t, 'data': msg.data})
-        
-        # Store pose data for drones
-        for drone in drones:
-            # Baseline and filtered have /pose suffix
-            for source in ['baseline', 'filtered']:
-                pose_topic = f'/{drone}/{source}/pose'
-                if topic == pose_topic:
-                    data[pose_topic].append({
-                        'time': t,
-                        'stamp': msg.header.stamp.sec * 1e9 + msg.header.stamp.nanosec,
-                        'x': msg.pose.position.x,
-                        'y': msg.pose.position.y,
-                        'z': msg.pose.position.z
-                    })
-                
-                # Phase data
-                phase_topic = f'/{drone}/{source}/phase'
-                if topic == phase_topic:
-                    data[phase_topic].append({
-                        'time': t,
-                        'data': msg.data
-                    })
-                
-                # Phase difference data (leader and follower)
-                for neighbor in ['leader', 'follower']:
-                    phase_diff_topic = f'/{drone}/{source}/phase_diff/{neighbor}'
-                    if topic == phase_diff_topic:
-                        data[phase_diff_topic].append({
-                            'time': t,
-                            'data': msg.data
-                        })
-            
-            # vicon_position and gps_position don't have /pose suffix
-            for source in ['vicon_position', 'gps_position']:
-                pose_topic = f'/{drone}/{source}'
-                if topic == pose_topic:
-                    data[pose_topic].append({
-                        'time': t,
-                        'stamp': msg.header.stamp.sec * 1e9 + msg.header.stamp.nanosec,
-                        'x': msg.pose.position.x,
-                        'y': msg.pose.position.y,
-                        'z': msg.pose.position.z
-                    })
-    
-    return data
-
-
-def get_encircle_start_time(data, drone, source='baseline'):
+def find_csv_files(group, model, speed):
     """
-    Find the timestamp when /encircle becomes 1.
-    Returns the closest drone pose timestamp.
+    Find CSV files for a given group, model, and speed.
+    New structure: base_dir / group / model / speed / seed_XX / *.csv
+    Seed folders are: seed_40, seed_45, seed_50, seed_55, seed_60
     """
-    encircle_data = data.get('/encircle', [])
+    search_path = base_dir / group / model / speed
     
-    # Determine the correct topic name based on source
-    if source in ['vicon_position', 'gps_position']:
-        pose_topic = f'/{drone}/{source}'
-    else:
-        pose_topic = f'/{drone}/{source}/pose'
+    if not search_path.exists():
+        print(f"Warning: Path does not exist: {search_path}")
+        return []
     
-    pose_data = data.get(pose_topic, [])
+    # Find all seed folders and their CSV files
+    csv_files = []
+    seed_folders = [f"seed_{s}" for s in [40, 45, 50, 55, 60]]
     
-    if not encircle_data or not pose_data:
-        print(f"    Warning: Missing data - encircle: {len(encircle_data)}, {pose_topic}: {len(pose_data)}")
+    for seed_folder in seed_folders:
+        seed_path = search_path / seed_folder
+        if seed_path.exists():
+            csv_files.extend(list(seed_path.glob('*.csv')))
+    
+    if len(csv_files) == 0:
+        print(f"Warning: No CSV files found in {search_path}/seed_*")
+    
+    return sorted(csv_files)
+
+
+def load_and_crop_csv(csv_path, crop_duration=CROP_DURATION):
+    """
+    Load a CSV file and crop data from when _encircle becomes True.
+    If _encircle flag is not available, use the first filtered/omega entry as the start point.
+    Returns the cropped dataframe.
+    """
+    try:
+        df = pd.read_csv(csv_path)
+        
+        start_idx = None
+        
+        # Try to use _encircle_data column first
+        if '_encircle_data' in df.columns:
+            encircle_idx = df[df['_encircle_data'] == True].index
+            if len(encircle_idx) > 0:
+                start_idx = encircle_idx[0]
+                # print(f"Using _encircle_data flag at index {start_idx} for {csv_path.name}")
+        
+        # Fallback: use first filtered/omega entry (any drone)
+        if start_idx is None:
+            print(f"Warning: _encircle_data not found or never True in {csv_path.name}, using filtered/omega fallback")
+            
+            # Find all omega columns with 'filtered' in the name
+            omega_cols = [col for col in df.columns if 'omega' in col.lower() and 'filtered' in col.lower()]
+            
+            if len(omega_cols) == 0:
+                print(f"Error: No omega columns found in {csv_path.name}")
+                return None
+            
+            # Find the first non-NaN entry across all omega columns
+            for omega_col in omega_cols:
+                non_nan_idx = df[omega_col].dropna().index
+                if len(non_nan_idx) > 0:
+                    if start_idx is None or non_nan_idx[0] < start_idx:
+                        start_idx = non_nan_idx[0]
+            
+            if start_idx is None:
+                print(f"Error: No valid omega data found in {csv_path.name}")
+                return None
+            
+            # print(f"Using first filtered/omega entry at index {start_idx} for {csv_path.name}")
+        
+        # Get timestamp column
+        timestamp_cols = [col for col in df.columns if 'time' in col.lower() or 'stamp' in col.lower()]
+        
+        if len(timestamp_cols) == 0:
+            print(f"Warning: No timestamp column found in {csv_path.name}")
+            # If no timestamp, crop by row count (assuming constant rate)
+            return df.iloc[start_idx:start_idx + int(crop_duration * 100)]  # Assuming ~100Hz
+        
+        # Use the first timestamp column found
+        time_col = timestamp_cols[0]
+        start_time = df.loc[start_idx, time_col]
+        end_time = start_time + crop_duration + 1.0  # Add 1 second buffer to ensure we have data at crop_duration
+        
+        # Crop the dataframe
+        cropped_df = df[(df[time_col] >= start_time) & (df[time_col] <= end_time)].copy()
+        
+        # Reset time to start from 0
+        cropped_df[time_col] = cropped_df[time_col] - start_time
+        
+        return cropped_df
+    
+    except Exception as e:
+        print(f"Error loading {csv_path}: {e}")
         return None
+
+
+def compute_settling_time_and_bounds(time_data, error_data, lower_bound=-5, upper_bound=5):
+    """
+    Compute time to reach and maintain bounds.
     
-    # Find first time encircle becomes True/1
-    encircle_start = None
-    for entry in encircle_data:
-        if entry['data']:
-            encircle_start = entry['time']
+    Returns:
+        time_to_enter: time when error first enters [lower_bound, upper_bound]
+        time_to_stabilize: time when error enters bounds and stays there until end
+        percent_time_in_bounds: percentage of time spent within bounds
+    """
+    in_bounds = (error_data >= lower_bound) & (error_data <= upper_bound)
+    
+    # Find first time entering bounds
+    time_to_enter = None
+    for i, in_bound in enumerate(in_bounds):
+        if in_bound:
+            time_to_enter = time_data[i]
             break
     
-    if encircle_start is None:
-        return None
-    
-    # Find closest pose timestamp
-    min_diff = float('inf')
-    closest_stamp = None
-    for pose in pose_data:
-        diff = abs(pose['time'] - encircle_start)
-        if diff < min_diff:
-            min_diff = diff
-            closest_stamp = pose['stamp']
-    
-    return closest_stamp
-
-
-def load_data(model):
-    """Load baseline and filtered data for a given model."""
-    baseline_path = base_dir / data_paths[model]['baseline']
-    filtered_path = base_dir / data_paths[model]['filtered']
-    
-    baseline = read_bag(baseline_path)
-    filtered = read_bag(filtered_path)
-    
-    return baseline, filtered
-
-
-def get_position_data(data, drone, source='baseline', start_time=None, duration=80.0):
-    """Extract x, y, z position data for a specific drone, optionally cropped from start_time."""
-    # Determine the correct topic name based on source
-    if source in ['vicon_position', 'gps_position']:
-        pose_topic = f'/{drone}/{source}'
-    else:
-        pose_topic = f'/{drone}/{source}/pose'
-    
-    pose_data = data.get(pose_topic, [])
-    
-    if not pose_data:
-        return {'time': np.array([]), 'x': np.array([]), 'y': np.array([]), 'z': np.array([])}
-    
-    # Filter data from start_time if provided
-    if start_time is not None:
-        # Crop to duration (in seconds) after start_time
-        end_time = start_time + duration * 1e9  # Convert duration to nanoseconds
-        pose_data = [p for p in pose_data if start_time <= p['stamp'] <= end_time]
-    
-    times = np.array([p['stamp'] for p in pose_data])
-    x = np.array([p['x'] for p in pose_data])
-    y = np.array([p['y'] for p in pose_data])
-    z = np.array([p['z'] for p in pose_data])
-    
-    return {'time': times, 'x': x, 'y': y, 'z': z}
-
-
-def get_phase_data(data, drone, source='baseline', start_time=None, duration=80.0):
-    """Extract phase data for a specific drone."""
-    phase_topic = f'/{drone}/{source}/phase'
-    phase_data = data.get(phase_topic, [])
-    
-    if not phase_data:
-        return {'time': np.array([]), 'phase': np.array([])}
-    
-    # Filter data from start_time if provided
-    if start_time is not None:
-        # Crop to duration (in seconds) after start_time
-        end_time = start_time + duration * 1e9  # Convert duration to nanoseconds
-        phase_data = [p for p in phase_data if start_time <= p['time'] <= end_time]
-    
-    times = np.array([p['time'] for p in phase_data])
-    phase = np.array([p['data'] for p in phase_data])
-    
-    return {'time': times, 'phase': phase}
-
-
-def compute_phase_diff(phase1_data, phase2_data):
-    """
-    Compute phase difference between two drones by interpolating to common timestamps.
-    Returns the phase difference in degrees, wrapped to [-180, 180].
-    Includes outlier filtering using median filtering.
-    """
-    if len(phase1_data['time']) == 0 or len(phase2_data['time']) == 0:
-        return {'time': np.array([]), 'phase_diff': np.array([])}
-    
-    # Use the timestamps from phase1 as reference
-    times = phase1_data['time']
-    
-    # Interpolate phase2 to match phase1 timestamps
-    phase2_interp = np.interp(times, phase2_data['time'], phase2_data['phase'])
-    
-    # Compute phase difference (in radians)
-    phase_diff_rad = phase1_data['phase'] - phase2_interp
-    
-    # Wrap phase difference to [-pi, pi] range
-    phase_diff_rad = np.arctan2(np.sin(phase_diff_rad), np.cos(phase_diff_rad))
-    
-    # Convert to degrees (will be in [-180, 180] range)
-    phase_diff_deg = np.degrees(np.abs(phase_diff_rad))
-    
-    # Apply median filter to remove outliers/spikes
-    if len(phase_diff_deg) > 5:
-        from scipy.signal import medfilt
-        # Use kernel size of 5 (must be odd)
-        phase_diff_filtered = medfilt(phase_diff_deg, kernel_size=5)
-    else:
-        phase_diff_filtered = phase_diff_deg
-    
-    # Additional outlier removal: remove points that differ too much from local median
-    if len(phase_diff_filtered) > 10:
-        window_size = 10
-        phase_diff_cleaned = phase_diff_filtered.copy()
+    # Find time when it enters bounds and stays there
+    time_to_stabilize = None
+    if time_to_enter is not None:
+        # Find first index where it enters bounds
+        first_idx = np.where(in_bounds)[0][0]
         
-        for i in range(len(phase_diff_filtered)):
-            # Define local window
-            start_idx = max(0, i - window_size // 2)
-            end_idx = min(len(phase_diff_filtered), i + window_size // 2 + 1)
-            local_window = phase_diff_filtered[start_idx:end_idx]
-            
-            # Compute local statistics
-            local_median = np.median(local_window)
-            local_std = np.std(local_window)
-            
-            # Replace outliers (> 3 std from median) with median
-            if abs(phase_diff_filtered[i] - local_median) > 3 * local_std:
-                phase_diff_cleaned[i] = local_median
+        # Check if it stays within bounds from that point onward
+        remaining_in_bounds = in_bounds[first_idx:]
         
-        phase_diff_final = phase_diff_cleaned
-    else:
-        phase_diff_final = phase_diff_filtered
+        # Find consecutive True values at the end
+        consecutive_at_end = 0
+        for val in reversed(remaining_in_bounds):
+            if val:
+                consecutive_at_end += 1
+            else:
+                break
+        
+        # If at least 80% of remaining time is in bounds from first entry, consider it stabilized
+        if len(remaining_in_bounds) > 0 and consecutive_at_end / len(remaining_in_bounds) >= 0.8:
+            time_to_stabilize = time_data[first_idx]
+        else:
+            time_to_stabilize = None
     
-    return {'time': times, 'phase_diff': phase_diff_final}
+    # Compute percentage of time in bounds
+    percent_time_in_bounds = np.sum(in_bounds) / len(in_bounds) * 100 if len(in_bounds) > 0 else 0
+    
+    return time_to_enter, time_to_stabilize, percent_time_in_bounds
 
 
-def compute_3d_rmse(baseline_data, filtered_data):
+def compute_integrated_absolute_error(time_data, error_data):
     """
-    Compute RMSE of 3D position between filtered and baseline.
-    Interpolates to common timestamps before computing RMSE.
+    Compute Integrated Time-weighted Absolute Error (ITAE).
+    ITAE = ∫t·|error(t)|dt
+    
+    Time-weighting emphasizes steady-state errors (later in flight) over startup errors.
+    Uses trapezoidal rule for numerical integration.
+    
+    Args:
+        time_data: array of time points
+        error_data: array of error values
+    
+    Returns:
+        itae: integrated time-weighted absolute error value
     """
-    if len(baseline_data['time']) == 0 or len(filtered_data['time']) == 0:
-        return np.nan
-    
-    # Use baseline timestamps as reference
-    times = baseline_data['time']
-    
-    # Interpolate filtered data to match baseline timestamps
-    x_filtered_interp = np.interp(times, filtered_data['time'], filtered_data['x'])
-    y_filtered_interp = np.interp(times, filtered_data['time'], filtered_data['y'])
-    z_filtered_interp = np.interp(times, filtered_data['time'], filtered_data['z'])
-    
-    # Compute 3D Euclidean distance at each timestamp
-    distances = np.sqrt(
-        (baseline_data['x'] - x_filtered_interp)**2 +
-        (baseline_data['y'] - y_filtered_interp)**2 +
-        (baseline_data['z'] - z_filtered_interp)**2
-    )
-    
-    # Compute RMSE
-    rmse = np.sqrt(np.mean(distances**2))
-    
-    return rmse
+    # Use trapezoidal rule for numerical integration with time-weighting
+    abs_error = np.abs(error_data)
+    time_weighted_error = time_data * abs_error
+    itae = np.trapezoid(time_weighted_error, time_data)
+    return itae
 
 
-def preprocess_all_data():
+def plot_phases_differences_errors_experiments():
     """
-    Preprocess all data once to avoid redundant computation.
-    Returns a nested dictionary with all processed data.
+    Create a 2x3 montage showing phase difference errors with leader.
+    Rows: models (modelA, modelC)
+    Columns: groups (baseline, gps/Filter1, relative/Filter2)
+    Shows ±5 deg confidence bounds and computes settling time.
     """
-    processed_data = {}
+    n_models = len(models)
+    n_groups = 3  # baseline, gps, relative
+    fig, axes = plt.subplots(n_models, n_groups, figsize=(18, 8), sharex=True, sharey=True)
+    
+    # Nominal phase difference (120 degrees = 2π/3 radians)
+    nominal_phase_diff_deg = 120.0  # degrees
+    confidence_bound = 5.0  # ±5 degrees
+    
+    # Group labels for columns
+    group_labels = ['Baseline', 'Filter 1 (GPS)', 'Filter 2 (Relative)']
+    groups_list = ['baseline', 'gps', 'relative']
+    
+    speed = speeds[0]  # Using only one speed for now
+    
+    for i_model, model in enumerate(models):
+        for j_group, (group, group_label) in enumerate(zip(groups_list, group_labels)):
+            ax = axes[i_model, j_group] if n_models > 1 else axes[j_group]
+            
+            try:
+                print(f"Processing model={model}, group={group}")
+                
+                # Plot zero error line
+                ax.axhline(y=0, color='k', linestyle='-', linewidth=1, alpha=0.9, zorder=1)
+                
+                # Plot confidence bounds (±5 degrees)
+                ax.axhline(y=confidence_bound, color='k', linestyle=':', linewidth=1.5, alpha=0.9, zorder=1)
+                ax.axhline(y=-confidence_bound, color='k', linestyle=':', linewidth=1.5, alpha=0.9, zorder=1)
+                # ax.fill_between(ax.get_xlim(), -confidence_bound, confidence_bound, 
+                #                color='gray', alpha=0.05, zorder=0)
+                
+                # Find CSV files for this group/model/speed
+                csv_files = find_csv_files(group, model, speed)
+                csv_files = [f for f in csv_files if 'processed' in f.name]
+                
+                if len(csv_files) == 0:
+                    print(f"  Warning: No processed CSV files found for {group}/{model}/{speed}")
+                    ax.text(0.5, 0.5, 'No data', ha='center', va='center', 
+                           transform=ax.transAxes, fontsize=10, color='gray')
+                else:
+                    # Process each drone across all seed runs
+                    for drone_idx, drone in enumerate(drones):
+                        drone_color = colors[drone_idx]
+                        
+                        phase_diff_errors_all = []
+                        time_references = []
+                        
+                        for csv_file in csv_files:
+                            df = load_and_crop_csv(csv_file)
+                            
+                            if df is None or len(df) == 0:
+                                continue
+                            
+                            # Get time column
+                            timestamp_cols = [col for col in df.columns if 'time' in col.lower() or 'stamp' in col.lower()]
+                            time_col = timestamp_cols[0] if len(timestamp_cols) > 0 else None
+                            if time_col is None:
+                                continue
+                            
+                            # Require measured phases
+                            follower, leader = DRONE_RELATIONSHIPS[drone]
+                            ego_meas_col = f"_{drone}_measured_phase"
+                            leader_meas_col = f"_{leader}_measured_phase"
+                            follower_meas_col = f"_{follower}_measured_phase"
+                            
+                            if not (ego_meas_col in df.columns and leader_meas_col in df.columns):
+                                continue
+                            
+                            # Extract and align phase data
+                            phase_leader_data = df[[time_col, leader_meas_col]].dropna().values
+                            phase_ego_data = df[[time_col, ego_meas_col]].dropna().values
+                            phase_follower_data = df[[time_col, follower_meas_col]].dropna().values
+                            
+                            lengths = [len(phase_leader_data), len(phase_ego_data), len(phase_follower_data)]
+                            min_length = min(lengths) if lengths else 0
+                            if min_length == 0:
+                                continue
+                            
+                            phase_leader_data = phase_leader_data[:min_length, :]
+                            phase_ego_data = phase_ego_data[:min_length, :]
+                            
+                            time_ref = phase_ego_data[:, 0]
+                            phase_leader = phase_leader_data[:, 1]
+                            phase_ego = phase_ego_data[:, 1]
+                            
+                            # Compute phase difference error
+                            phase_diff_leader = wrap_to_pi(phase_leader - phase_ego)
+                            phase_diff_deg = np.rad2deg(phase_diff_leader)
+                            error_phase_diff = phase_diff_deg - nominal_phase_diff_deg
+                            
+                            phase_diff_errors_all.append(error_phase_diff)
+                            time_references.append(time_ref)
+                        
+                        # Plot aggregated statistics
+                        if len(phase_diff_errors_all) > 0:
+                            longest_idx = np.argmax([len(t) for t in time_references])
+                            time_common = time_references[longest_idx]
+                            
+                            errors_interp = [np.interp(time_common, t, e, left=np.nan, right=np.nan) 
+                                            for t, e in zip(time_references, phase_diff_errors_all)]
+                            stacked = np.array(errors_interp)
+                            mean_err = np.nanmean(stacked, axis=0)
+                            std_err = np.nanstd(stacked, axis=0)
+                            
+                            ax.plot(time_common, mean_err, '-', color=drone_color, linewidth=2.0, 
+                                   label=labels[drone], zorder=3)
+                            ax.fill_between(time_common, mean_err - std_err, mean_err + std_err,
+                                           color=drone_color, alpha=0.15, zorder=2)
+                
+                # Configure plot
+                ax.grid(True, linestyle=':')
+                ax.set_ylim(-20, 20)
+                ax.set_xlim(0, CROP_DURATION)
+                
+                # Column titles
+                if i_model == 0:
+                    ax.set_title(group_label, fontweight='bold')
+                
+                # Row labels (model names)
+                if j_group == 0:
+                    model_label = model_labels[i_model]
+                    ax.set_ylabel(f'{model_label}\n\nError (deg)', fontweight='bold')
+                
+                # Bottom labels
+                if i_model == n_models - 1:
+                    ax.set_xlabel('Time (s)')
+                
+                # Legend on top-left cell
+                if i_model == 0 and j_group == 0:
+                    ax.legend(loc='upper right', fontsize=11, framealpha=0.9)
+                
+            except Exception as e:
+                print(f"Error plotting model={model}, group={group}: {e}")
+                import traceback
+                traceback.print_exc()
+                ax.text(0.5, 0.5, f'Error:\\n{str(e)[:50]}', ha='center', va='center', 
+                       transform=ax.transAxes, fontsize=8, color='red')
+    
+    plt.tight_layout(rect=[0, 0, 1, 0.97])
+    output_path = plots_dir / 'phase_diff_leader_errors.png'
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    print(f"Phase difference leader errors plot saved to: {output_path}")
+    plt.close()
+
+
+def compute_phase_diff_settling_summary():
+    """
+    Compute and print settling time summary table for phase difference errors.
+    """
+    confidence_bound = 5.0  # ±5 degrees
+    nominal_phase_diff_deg = 120.0    
+    speed = speeds[0]
+    
+    # Store data for all models/groups/drones
+    settling_summary = {model: {group: {drone: {'enter': None, 'stabilize': None, 'percent': None} 
+                                       for drone in drones} 
+                               for group in groups} 
+                       for model in models}
     
     for model in models:
-        print(f"Preprocessing {model}...")
-        processed_data[model] = {}
-        
-        try:
-            baseline, filtered = load_data(model)
+        for group in groups:            
+            csv_files = find_csv_files(group, model, speed)
+            csv_files = [f for f in csv_files if 'processed' in f.name]
+            
+            if len(csv_files) == 0:
+                print("  No processed CSV files found")
+                continue
             
             for drone in drones:
-                print(f"  Preprocessing {drone}...")
-                processed_data[model][drone] = {}
+                phase_diff_errors_all = []
+                time_references = []
                 
-                try:
-                    # Find when encircle starts for both baseline and filtered
-                    baseline_start_time = get_encircle_start_time(baseline, drone, source='vicon_position')
-                    filtered_start_time = get_encircle_start_time(filtered, drone, source='vicon_position')
+                for csv_file in csv_files:
+                    df = load_and_crop_csv(csv_file)
                     
-                    # Get position data cropped from encircle start
-                    baseline_data = get_position_data(baseline, drone, 'vicon_position', start_time=baseline_start_time)
-                    filtered_data = get_position_data(filtered, drone, 'vicon_position', start_time=filtered_start_time)
+                    if df is None or len(df) == 0:
+                        continue
                     
-                    # Get phase data
-                    baseline_phase = get_phase_data(baseline, drone, 'baseline', start_time=baseline_start_time)
-                    filtered_phase = get_phase_data(filtered, drone, 'filtered', start_time=filtered_start_time)
+                    # Get time column
+                    timestamp_cols = [col for col in df.columns if 'time' in col.lower() or 'stamp' in col.lower()]
+                    time_col = timestamp_cols[0] if len(timestamp_cols) > 0 else None
+                    if time_col is None:
+                        continue
                     
-                    # Compute RMSE
-                    rmse = compute_3d_rmse(baseline_data, filtered_data)
+                    # Get measured phases
+                    follower, leader = DRONE_RELATIONSHIPS[drone]
+                    ego_meas_col = f"_{drone}_measured_phase"
+                    leader_meas_col = f"_{leader}_measured_phase"
                     
-                    # Store all processed data
-                    processed_data[model][drone] = {
-                        'baseline_start_time': baseline_start_time,
-                        'filtered_start_time': filtered_start_time,
-                        'baseline_data': baseline_data,
-                        'filtered_data': filtered_data,
-                        'baseline_phase': baseline_phase,
-                        'filtered_phase': filtered_phase,
-                        'rmse': rmse,
-                        'baseline_raw': baseline,
-                        'filtered_raw': filtered
+                    if not (ego_meas_col in df.columns and leader_meas_col in df.columns):
+                        continue
+                    
+                    # Extract and align phase data
+                    phase_leader_data = df[[time_col, leader_meas_col]].dropna().values
+                    phase_ego_data = df[[time_col, ego_meas_col]].dropna().values
+                    
+                    lengths = [len(phase_leader_data), len(phase_ego_data)]
+                    min_length = min(lengths) if lengths else 0
+                    if min_length == 0:
+                        continue
+                    
+                    phase_leader_data = phase_leader_data[:min_length, :]
+                    phase_ego_data = phase_ego_data[:min_length, :]
+                    
+                    time_ref = phase_ego_data[:, 0]
+                    phase_leader = phase_leader_data[:, 1]
+                    phase_ego = phase_ego_data[:, 1]
+                    
+                    # Compute phase difference error
+                    phase_diff_leader = wrap_to_pi(phase_leader - phase_ego)
+                    phase_diff_deg = np.rad2deg(phase_diff_leader)
+                    error_phase_diff = phase_diff_deg - nominal_phase_diff_deg
+                    
+                    phase_diff_errors_all.append(error_phase_diff)
+                    time_references.append(time_ref)
+                
+                # Compute aggregate statistics
+                if len(phase_diff_errors_all) > 0:
+                    longest_idx = np.argmax([len(t) for t in time_references])
+                    time_common = time_references[longest_idx]
+                    
+                    errors_interp = [np.interp(time_common, t, e, left=np.nan, right=np.nan) 
+                                    for t, e in zip(time_references, phase_diff_errors_all)]
+                    stacked = np.array(errors_interp)
+                    mean_err = np.nanmean(stacked, axis=0)
+                    
+                    # Compute settling time
+                    time_to_enter, time_to_stabilize, percent_in_bounds = compute_settling_time_and_bounds(
+                        time_common, mean_err, lower_bound=-confidence_bound, upper_bound=confidence_bound
+                    )
+                    
+                    settling_summary[model][group][drone] = {
+                        'enter': time_to_enter,
+                        'stabilize': time_to_stabilize,
+                        'percent': percent_in_bounds
                     }
-                    
-                    print(f"    RMSE: {rmse:.4f} m")
-                    
-                except Exception as e:
-                    print(f"    Error preprocessing {drone}: {e}")
-                    processed_data[model][drone] = None
-                    
-        except Exception as e:
-            print(f"  Error loading {model}: {e}")
     
-    return processed_data
-
-
-def create_montage(processed_data):
-    """Create a 4x3 montage of figures showing baseline vs filtered data."""
-    # Create figure with subplots: 4 rows (models) x 3 columns (drones)
-    # Each subplot will have 3 axes stacked vertically for x, y, z
-    fig = plt.figure(figsize=(20, 24))
+    # Print comprehensive summary tables
+    print("\n" + "=" * 140)
+    print("SUMMARY TABLE - Phase Difference Settling Times")
+    print("=" * 140)
     
-    # Outer grid for models (rows) and drones (columns)
-    outer_grid = fig.add_gridspec(4, 3, hspace=0.3, wspace=0.25,
-                                   left=0.08, right=0.95, top=0.95, bottom=0.05)
-    
-    for i, model in enumerate(models):
-        print(f"Plotting {model}...")
+    for group in groups:
+        print(f"\n{group.upper()}:")
         
-        for j, drone in enumerate(drones):
-            print(f"  Plotting {drone}...")
+        # Combined comprehensive table for this group
+        table_data_combined = []
+        for drone in drones:
+            enter_a = settling_summary['modelA'][group][drone]['enter']
+            stabilize_a = settling_summary['modelA'][group][drone]['stabilize']
+            percent_a = settling_summary['modelA'][group][drone]['percent']
             
-            # Create inner grid for x, y, z plots
-            inner_grid = outer_grid[i, j].subgridspec(3, 1, hspace=0.15)
+            enter_c = settling_summary['modelC'][group][drone]['enter']
+            stabilize_c = settling_summary['modelC'][group][drone]['stabilize']
+            percent_c = settling_summary['modelC'][group][drone]['percent']
             
-            # Get preprocessed data
-            try:
-                drone_data = processed_data[model][drone]
-                if drone_data is None:
-                    raise ValueError("No data available")
-                
-                baseline_start_time = drone_data['baseline_start_time']
-                filtered_start_time = drone_data['filtered_start_time']
-                baseline_data = drone_data['baseline_data']
-                filtered_data = drone_data['filtered_data']
-                rmse = drone_data['rmse']
-                    
-                # Normalize time to start from 0 (aligned at encircle start)
-                # Both datasets start from their respective encircle events and are normalized to t=0
-                if len(baseline_data['time']) > 0:
-                    # Subtract the encircle start time to align at t=0
-                    t_base = (baseline_data['time'] - baseline_start_time) / 1e9  # Convert to seconds
-                else:
-                    t_base = np.array([])
-                
-                if len(filtered_data['time']) > 0:
-                    # Subtract the encircle start time to align at t=0
-                    t_filt = (filtered_data['time'] - filtered_start_time) / 1e9  # Convert to seconds
-                else:
-                    t_filt = np.array([])
-                
-                print(f"    Baseline data points: {len(t_base)}, time range: [{t_base[0] if len(t_base) > 0 else 0:.2f}, {t_base[-1] if len(t_base) > 0 else 0:.2f}]")
-                print(f"    Filtered data points: {len(t_filt)}, time range: [{t_filt[0] if len(t_filt) > 0 else 0:.2f}, {t_filt[-1] if len(t_filt) > 0 else 0:.2f}]")
-                
-                # Plot x, y, z
-                axes_labels = ['x (m)', 'y (m)', 'z (m)']
-                data_keys = ['x', 'y', 'z']
-                
-                for k, (label, key) in enumerate(zip(axes_labels, data_keys)):
-                    ax = fig.add_subplot(inner_grid[k])
-                    
-                    # Plot baseline and filtered data
-                    if len(t_base) > 0:
-                        ax.plot(t_base, baseline_data[key], 'b-', label='Baseline', alpha=0.7, linewidth=1.5)
-                    if len(t_filt) > 0:
-                        ax.plot(t_filt, filtered_data[key], 'r-', label='Filtered', alpha=0.7, linewidth=1.5)
-                    
-                    ax.set_ylabel(label, fontsize=10)
-                    ax.grid(True, alpha=0.3)
-                    ax.tick_params(labelsize=9)
-                    
-                    # Add legend only to the first (top) plot
-                    if k == 0:
-                        ax.legend(loc='upper right', fontsize=9)
-                        # Add title for the first plot in each column
-                        if i == 0:
-                            ax.set_title(drone, fontsize=12, fontweight='bold')
-                    
-                    # Add x-label only to the bottom plot
-                    if k == 2:
-                        ax.set_xlabel('Time (s)', fontsize=10)
-                    else:
-                        ax.set_xticklabels([])
-                    
-                    # Add model label on the left
-                    if j == 0 and k == 1:  # Middle row of leftmost column
-                        # Use reversed index to get correct omega label (0.2 at top, 0.8 at bottom)
-                        label_model = models[len(models) - 1 - i]
-                        omega_value = label_model.split('_')[-1].replace('_', '.')
-                        ax.text(-0.25, 0.5, f'ω = 0.{omega_value}', 
-                                transform=ax.transAxes,
-                                fontsize=14, fontweight='bold',
-                                va='center', ha='center', rotation=90)
-                
-            except Exception as e:
-                print(f"    Error plotting {drone}: {e}")
-                # Create empty subplot
-                ax = fig.add_subplot(inner_grid[1])
-                ax.text(0.5, 0.5, f'No data\n{drone}', 
-                       transform=ax.transAxes,
-                       ha='center', va='center', fontsize=10, color='red')
-                ax.axis('off')
-    
-    # Add main title
-    fig.suptitle('Baseline vs Filtered Comparison - Position Data (x, y, z)', 
-                 fontsize=16, fontweight='bold', y=0.98)
-    
-    # Apply tight layout
-    # plt.tight_layout(rect=[0, 0, 1, 0.97])
-    
-    # Save figure
-    output_path = base_dir / 'montage_results.png'
-    plt.savefig(output_path, dpi=150, bbox_inches='tight')
-    print(f"\nMontage saved to: {output_path}")
-    
-    # plt.show()
-
-
-def create_3d_montage(processed_data):
-    """Create a 4x3 montage of 3D trajectory plots."""
-    # Create figure with subplots: 4 rows (models) x 3 columns (drones)
-    fig = plt.figure(figsize=(20, 24))
-    
-    # Outer grid for models (rows) and drones (columns)
-    outer_grid = fig.add_gridspec(4, 3, hspace=0.25, wspace=0.2,
-                                   left=0.05, right=0.95, top=0.95, bottom=0.05)
-    
-    for i, model in enumerate(models):
-        print(f"Plotting 3D {model}...")
+            enter_a_str = f"{enter_a:.2f}" if enter_a is not None else "N/A"
+            stabilize_a_str = f"{stabilize_a:.2f}" if stabilize_a is not None else "N/A"
+            percent_a_str = f"{percent_a:.1f}%" if percent_a is not None else "N/A"
+            
+            enter_c_str = f"{enter_c:.2f}" if enter_c is not None else "N/A"
+            stabilize_c_str = f"{stabilize_c:.2f}" if stabilize_c is not None else "N/A"
+            percent_c_str = f"{percent_c:.1f}%" if percent_c is not None else "N/A"
+            
+            table_data_combined.append([
+                labels[drone],
+                enter_a_str, stabilize_a_str, percent_a_str,
+                enter_c_str, stabilize_c_str, percent_c_str
+            ])
         
-        for j, drone in enumerate(drones):
-            print(f"  Plotting 3D {drone}...")
-            
-            # Create 3D subplot
-            ax = fig.add_subplot(outer_grid[i, j], projection='3d')
+        headers = [
+            'Drone',
+            'ModelA\nEnter (s)', 'ModelA\nStabilize (s)', 'ModelA\nIn Bounds (%)',
+            'ModelC\nEnter (s)', 'ModelC\nStabilize (s)', 'ModelC\nIn Bounds (%)'
+        ]
+        print(tabulate(table_data_combined, headers=headers, tablefmt='grid', stralign='center'))
+
+
+def plot_omega_errors_experiments():
+    """
+    Create a 2x3 montage showing omega errors.
+    Rows: models (modelA, modelC)
+    Columns: groups (baseline, gps/Filter1, relative/Filter2)
+    """
+    n_models = len(models)
+    n_groups = 3  # baseline, gps, relative
+    fig, axes = plt.subplots(n_models, n_groups, figsize=(18, 8), sharex=True, sharey=True)
+    
+    # Group labels for columns
+    group_labels = ['Baseline', 'Filter 1 (GPS)', 'Filter 2 (Relative)']
+    groups_list = ['baseline', 'gps', 'relative']
+    
+    # Nominal omega values
+    nominal_omegas = {
+        '0_2': 0.2,
+        '0_4': 0.4,
+        '0_6': 0.6,
+        '0_8': 0.8
+    }
+    
+    speed = speeds[0]  # Using only one speed for now
+    nominal_omega = nominal_omegas[speed]
+    
+    for i_model, model in enumerate(models):
+        for j_group, (group, group_label) in enumerate(zip(groups_list, group_labels)):
+            ax = axes[i_model, j_group] if n_models > 1 else axes[j_group]
             
             try:
-                # Get preprocessed data
-                drone_data = processed_data[model][drone]
-                if drone_data is None:
-                    raise ValueError("No data available")
+                print(f"Processing model={model}, group={group}")
                 
-                baseline_start_time = drone_data['baseline_start_time']
-                filtered_start_time = drone_data['filtered_start_time']
-                baseline_data = drone_data['baseline_data']
-                filtered_data = drone_data['filtered_data']
-                    
-                # Normalize time to start from 0
-                if len(baseline_data['time']) > 0:
-                    t_base = (baseline_data['time'] - baseline_start_time) / 1e9
-                    x_base = baseline_data['x']
-                    y_base = baseline_data['y']
-                    z_base = baseline_data['z']
+                # Plot zero error line
+                ax.axhline(y=0, color='k', linestyle='-', linewidth=1, alpha=0.9, zorder=1)
+                
+                # Find CSV files for this group/model/speed
+                csv_files = find_csv_files(group, model, speed)
+                
+                if len(csv_files) == 0:
+                    print(f"  Warning: No CSV files found for {group}/{model}/{speed}")
+                    ax.text(0.5, 0.5, 'No data', ha='center', va='center', 
+                           transform=ax.transAxes, fontsize=10, color='gray')
                 else:
-                    x_base = y_base = z_base = t_base = np.array([])
-                
-                if len(filtered_data['time']) > 0:
-                    t_filt = (filtered_data['time'] - filtered_start_time) / 1e9
-                    x_filt = filtered_data['x']
-                    y_filt = filtered_data['y']
-                    z_filt = filtered_data['z']
-                else:
-                    x_filt = y_filt = z_filt = t_filt = np.array([])
-                
-                # Create common time reference by interpolating both to a unified time grid
-                # This ensures both trajectories grow at the same rate
-                if len(t_base) > 0 and len(t_filt) > 0:
-                    # Use the longer time series as reference
-                    if len(t_base) >= len(t_filt):
-                        t_common = t_base
-                        x_base_interp = x_base
-                        y_base_interp = y_base
-                        z_base_interp = z_base
-                        x_filt_interp = np.interp(t_common, t_filt, x_filt)
-                        y_filt_interp = np.interp(t_common, t_filt, y_filt)
-                        z_filt_interp = np.interp(t_common, t_filt, z_filt)
-                    else:
-                        t_common = t_filt
-                        x_filt_interp = x_filt
-                        y_filt_interp = y_filt
-                        z_filt_interp = z_filt
-                        x_base_interp = np.interp(t_common, t_base, x_base)
-                        y_base_interp = np.interp(t_common, t_base, y_base)
-                        z_base_interp = np.interp(t_common, t_base, z_base)
-                    
-                    # Add progressive z-offset to create spiral effect (0.05m per second)
-                    z_base_spiral = z_base_interp + t_common * 0.1
-                    z_filt_spiral = z_filt_interp + t_common * 0.1
-                elif len(t_base) > 0:
-                    t_common = t_base
-                    x_base_interp = x_base
-                    y_base_interp = y_base
-                    z_base_spiral = z_base + t_common * 0.1
-                    x_filt_interp = y_filt_interp = z_filt_spiral = np.array([])
-                elif len(t_filt) > 0:
-                    t_common = t_filt
-                    x_filt_interp = x_filt
-                    y_filt_interp = y_filt
-                    z_filt_spiral = z_filt + t_common * 0.1
-                    x_base_interp = y_base_interp = z_base_spiral = np.array([])
-                else:
-                    x_base_interp = y_base_interp = z_base_spiral = np.array([])
-                    x_filt_interp = y_filt_interp = z_filt_spiral = np.array([])
-                
-                # Plot 3D trajectories with spiral effect
-                if len(x_base_interp) > 0:
-                    ax.plot(x_base_interp, y_base_interp, z_base_spiral, 'b-', label='Baseline', alpha=0.7, linewidth=2)
-                    # Mark start point
-                    ax.scatter(x_base_interp[0], y_base_interp[0], z_base_spiral[0], c='blue', marker='o', s=100, alpha=0.8)
-                
-                if len(x_filt_interp) > 0:
-                    ax.plot(x_filt_interp, y_filt_interp, z_filt_spiral, 'r-', label='Filtered', alpha=0.7, linewidth=2)
-                    # Mark start point
-                    ax.scatter(x_filt_interp[0], y_filt_interp[0], z_filt_spiral[0], c='red', marker='o', s=100, alpha=0.8)
-                
-                # Set labels
-                ax.set_xlabel('X (m)', fontsize=10)
-                ax.set_ylabel('Y (m)', fontsize=10)
-                ax.set_zlabel('Z (m)', fontsize=10)
-                
-                # Set title for top row
-                if i == 0:
-                    ax.set_title(drone, fontsize=12, fontweight='bold')
-                
-                # Add legend
-                ax.legend(loc='upper right', fontsize=9)
-                
-                # Set viewing angle and orthographic projection
-                ax.view_init(elev=20, azim=45)
-                ax.set_proj_type('ortho')
-                
-                # Set equal aspect ratio for better visualization
-                if len(x_base_interp) > 0 or len(x_filt_interp) > 0:
-                    all_x = np.concatenate([x_base_interp, x_filt_interp]) if len(x_base_interp) > 0 and len(x_filt_interp) > 0 else (x_base_interp if len(x_base_interp) > 0 else x_filt_interp)
-                    all_y = np.concatenate([y_base_interp, y_filt_interp]) if len(y_base_interp) > 0 and len(y_filt_interp) > 0 else (y_base_interp if len(y_base_interp) > 0 else y_filt_interp)
-                    all_z = np.concatenate([z_base_spiral, z_filt_spiral]) if len(x_base_interp) > 0 and len(x_filt_interp) > 0 else (z_base_spiral if len(x_base_interp) > 0 else z_filt_spiral)
-                    
-                    max_range = np.array([all_x.max()-all_x.min(), 
-                                            all_y.max()-all_y.min(), 
-                                            all_z.max()-all_z.min()]).max() / 2.0
-                    
-                    mid_x = (all_x.max()+all_x.min()) * 0.5
-                    mid_y = (all_y.max()+all_y.min()) * 0.5
-                    mid_z = (all_z.max()+all_z.min()) * 0.5
-                    
-                    ax.set_xlim(mid_x - max_range, mid_x + max_range)
-                    ax.set_ylim(mid_y - max_range, mid_y + max_range)
-                    ax.set_zlim(mid_z - max_range, mid_z + max_range)
-                    
-                # Add model label on the left side
-                if j == 0:
-                    # Use reversed index to get correct omega label (0.2 at top, 0.8 at bottom)
-                    label_model = models[len(models) - 1 - i]
-                    omega_value = label_model.split('_')[-1].replace('_', '.')
-                    ax.text2D(-0.15, 0.5, f'ω = 0.{omega_value}', 
-                             transform=ax.transAxes,
-                             fontsize=14, fontweight='bold',
-                             va='center', ha='center', rotation=90)
-                
-                print(f"    3D plot created with {len(x_base_interp)} baseline and {len(x_filt_interp)} filtered points")
-            
-            except Exception as e:
-                print(f"    Error plotting 3D {drone}: {e}")
-                import traceback
-                traceback.print_exc()
-                ax.text2D(0.5, 0.5, f'No data\n{drone}', 
-                         transform=ax.transAxes,
-                         ha='center', va='center', fontsize=10, color='red')
-    
-    # Add main title
-    fig.suptitle('3D Trajectory Comparison - Baseline vs Filtered', 
-                 fontsize=16, fontweight='bold', y=0.98)
-    
-    # Apply tight layout
-    # plt.tight_layout(rect=[0, 0, 1, 0.97])
-    
-    # Save figure
-    output_path = base_dir / 'montage_3d_results.png'
-    plt.savefig(output_path, dpi=150, bbox_inches='tight')
-    print(f"\n3D Montage saved to: {output_path}")
-    
-    plt.close()
-
-
-def create_phase_montage(processed_data):
-    """Create a 4x3 montage of phase difference plots."""
-    # Create figure with subplots: 4 rows (models) x 3 columns (drones)
-    # Each subplot will have 2 axes stacked vertically for leader and follower phase diff
-    fig = plt.figure(figsize=(20, 24))
-    
-    # Outer grid for models (rows) and drones (columns)
-    outer_grid = fig.add_gridspec(4, 3, hspace=0.3, wspace=0.25,
-                                   left=0.08, right=0.95, top=0.95, bottom=0.05)
-    
-    for i, model in enumerate(models):
-        print(f"Plotting phase {model}...")
-        
-        for j, drone in enumerate(drones):
-            print(f"  Plotting phase {drone}...")
-            
-            # Create inner grid for leader and follower phase diff plots
-            inner_grid = outer_grid[i, j].subgridspec(2, 1, hspace=0.15)
-            
-            try:
-                # Get preprocessed data
-                drone_data = processed_data[model][drone]
-                if drone_data is None:
-                    raise ValueError("No data available")
-                
-                baseline_start_time = drone_data['baseline_start_time']
-                filtered_start_time = drone_data['filtered_start_time']
-                baseline_raw = drone_data['baseline_raw']
-                filtered_raw = drone_data['filtered_raw']
-                    
-                # Define neighbor relationships
-                # C04: follower=C05, leader=C14
-                # C05: follower=C14, leader=C04
-                # C14: follower=C04, leader=C05
-                neighbor_map = {
-                    'C04': {'leader': 'C14', 'follower': 'C05'},
-                    'C05': {'leader': 'C04', 'follower': 'C14'},
-                    'C14': {'leader': 'C05', 'follower': 'C04'}
-                }
-                
-                # Plot for leader and follower
-                neighbors = ['leader', 'follower']
-                
-                for k, neighbor in enumerate(neighbors):
-                    ax = fig.add_subplot(inner_grid[k])
-                    
-                    # Get the actual drone name for this relationship
-                    neighbor_drone = neighbor_map[drone][neighbor]
-                    label = f'Phase Diff to {neighbor.capitalize()} ({neighbor_drone})'
-                    
-                    # Get individual phase data for ego drone and neighbor drone
-                    # Baseline
-                    ego_phase_base = get_phase_data(baseline_raw, drone, 'baseline', start_time=baseline_start_time)
-                    neighbor_phase_base = get_phase_data(baseline_raw, neighbor_drone, 'baseline', start_time=baseline_start_time)
-                    
-                    # Filtered
-                    ego_phase_filt = get_phase_data(filtered_raw, drone, 'filtered', start_time=filtered_start_time)
-                    neighbor_phase_filt = get_phase_data(filtered_raw, neighbor_drone, 'filtered', start_time=filtered_start_time)
-                    
-                    # Compute absolute phase difference directly
-                    # Baseline
-                    if len(ego_phase_base['time']) > 0 and len(neighbor_phase_base['time']) > 0:
-                        # Interpolate neighbor phase to match ego timestamps
-                        neighbor_phase_interp = np.interp(ego_phase_base['time'], neighbor_phase_base['time'], neighbor_phase_base['phase'])
-                        # Compute absolute phase difference in radians, then convert to degrees
-                        phase_diff_rad = ego_phase_base['phase'] - neighbor_phase_interp
-                        phase_diff_rad = np.arctan2(np.sin(phase_diff_rad), np.cos(phase_diff_rad))
-                        baseline_phase_abs = np.degrees(np.abs(phase_diff_rad))
-                        t_base = (ego_phase_base['time'] - baseline_start_time) / 1e9
-                    else:
-                        baseline_phase_abs = np.array([])
-                        t_base = np.array([])
-                    
-                    # Filtered
-                    if len(ego_phase_filt['time']) > 0 and len(neighbor_phase_filt['time']) > 0:
-                        # Interpolate neighbor phase to match ego timestamps
-                        neighbor_phase_interp = np.interp(ego_phase_filt['time'], neighbor_phase_filt['time'], neighbor_phase_filt['phase'])
-                        # Compute absolute phase difference in radians, then convert to degrees
-                        phase_diff_rad = ego_phase_filt['phase'] - neighbor_phase_interp
-                        phase_diff_rad = np.arctan2(np.sin(phase_diff_rad), np.cos(phase_diff_rad))
-                        filtered_phase_abs = np.degrees(np.abs(phase_diff_rad))
-                        t_filt = (ego_phase_filt['time'] - filtered_start_time) / 1e9
-                    else:
-                        filtered_phase_abs = np.array([])
-                        t_filt = np.array([])
-                    
-                    # Plot absolute phase difference data
-                    if len(t_base) > 0:
-                        ax.plot(t_base, baseline_phase_abs, 'b-', 
-                                label='Baseline', alpha=0.7, linewidth=1.5)
-                    if len(t_filt) > 0:
-                        ax.plot(t_filt, filtered_phase_abs, 'r-', 
-                                label='Filtered', alpha=0.7, linewidth=1.5)
-                    
-                    # Add theoretical value lines
-                    # Leader is ahead: ego - leader = -120°
-                    # Follower is behind: ego - follower = +120°
-                    # if neighbor == 'leader':
-                    #     ax.axhline(y=120, color='g', linestyle='--', linewidth=2, 
-                    #               label='Theoretical (-120°)', alpha=0.7)
-                    # else:  # follower
-                    ax.axhline(y=120, color='g', linestyle='--', linewidth=2, 
-                                label='Theoretical', alpha=0.7)
-                    
-                    ax.set_ylabel('Phase Difference (deg)', fontsize=10)
-                    ax.grid(True, alpha=0.3)
-                    ax.tick_params(labelsize=9)
-                    
-                    # Set y-axis limits to show the full range [-180, 180]
-                    ax.set_ylim(100, 140)
-                    
-                    # Add legend only to the first (top) plot
-                    if k == 0:
-                        ax.legend(loc='upper right', fontsize=9)
-                        # Add title for the first plot in each column
-                        if i == 0:
-                            ax.set_title(drone, fontsize=12, fontweight='bold')
-                    
-                    # Add subplot label showing which drone is the neighbor
-                    ax.text(0.02, 0.95, label, transform=ax.transAxes,
-                            fontsize=9, va='top', ha='left',
-                            bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
-                    
-                    # Add x-label only to the bottom plot
-                    if k == 1:
-                        ax.set_xlabel('Time (s)', fontsize=10)
-                    else:
-                        ax.set_xticklabels([])
+                    # Process each drone across all seed runs
+                    for drone_idx, drone in enumerate(drones):
+                        drone_color = colors[drone_idx]
                         
-                    # Add model label on the left
-                    if j == 0 and k == 0:  # Top row of leftmost column
-                        # Use reversed index to get correct omega label (0.2 at top, 0.8 at bottom)
-                        label_model = models[len(models) - 1 - i]
-                        omega_value = label_model.split('_')[-1].replace('_', '.')
-                        ax.text(-0.25, 0.5, f'ω = 0.{omega_value}', 
-                               transform=ax.transAxes,
-                               fontsize=14, fontweight='bold',
-                               va='center', ha='center', rotation=90)
-            
+                        errors_omega_all = []
+                        time_references = []
+                        
+                        for csv_path in csv_files:
+                            df = load_and_crop_csv(csv_path)
+                            
+                            if df is None or len(df) == 0:
+                                continue
+                            
+                            # Get omega column for this drone
+                            omega_cols = [col for col in df.columns if drone in col and 'omega' in col.lower()]
+                            
+                            if len(omega_cols) == 0:
+                                continue
+                            
+                            omega_col = omega_cols[0]
+                            
+                            # Get time column
+                            timestamp_cols = [col for col in df.columns if 'time' in col.lower() or 'stamp' in col.lower()]
+                            time_col = timestamp_cols[0] if len(timestamp_cols) > 0 else None
+                            if time_col is None:
+                                continue
+                            
+                            # Get valid data
+                            omega_valid = df[[time_col, omega_col]].dropna()
+                            
+                            if len(omega_valid) == 0:
+                                continue
+                            
+                            time_data = omega_valid[time_col].values
+                            omega_data = omega_valid[omega_col].values
+                            error_omega = omega_data - nominal_omega
+                            
+                            errors_omega_all.append(error_omega)
+                            time_references.append(time_data)
+                        
+                        # Plot aggregated statistics and compute ITAE
+                        if len(errors_omega_all) > 0:
+                            longest_idx = np.argmax([len(t) for t in time_references])
+                            time_common = time_references[longest_idx]
+                            
+                            errors_interp = [np.interp(time_common, t, e, left=np.nan, right=np.nan) 
+                                            for t, e in zip(time_references, errors_omega_all)]
+                            stacked = np.array(errors_interp)
+                            mean_err = np.nanmean(stacked, axis=0)
+                            std_err = np.nanstd(stacked, axis=0)
+                            
+                            ax.plot(time_common, mean_err, '-', color=drone_color, linewidth=2.0, 
+                                   label=f'{labels[drone]}', zorder=3)
+                            ax.fill_between(time_common, mean_err - std_err, mean_err + std_err,
+                                           color=drone_color, alpha=0.15, zorder=2)
+                            
+                
+                # Configure plot
+                ax.grid(True, linestyle=':')
+                ax.set_ylim(-0.15, 0.15)
+                ax.set_xlim(0, CROP_DURATION)
+                
+                # Column titles
+                if i_model == 0:
+                    ax.set_title(group_label, fontweight='bold')
+                
+                # Row labels (model names)
+                if j_group == 0:
+                    model_label = model_labels[i_model]
+                    ax.set_ylabel(f'{model_label}\n\nError (rad/s)', fontweight='bold')
+                
+                # Bottom labels
+                if i_model == n_models - 1:
+                    ax.set_xlabel('Time (s)')
+                
+                # Legend on top-left cell
+                if i_model == 0 and j_group == 0:
+                    ax.legend(loc='upper right', fontsize=11, framealpha=0.9)
+                
             except Exception as e:
-                print(f"    Error plotting phase {drone}: {e}")
+                print(f"Error plotting model={model}, group={group}: {e}")
                 import traceback
                 traceback.print_exc()
-                # Create empty subplot
-                ax = fig.add_subplot(inner_grid[0])
-                ax.text(0.5, 0.5, f'No data\n{drone}', 
-                       transform=ax.transAxes,
-                       ha='center', va='center', fontsize=10, color='red')
-                ax.axis('off')
+                ax.text(0.5, 0.5, f'Error:\\n{str(e)[:50]}', ha='center', va='center', 
+                       transform=ax.transAxes, fontsize=8, color='red')
     
-    # Add main title
-    fig.suptitle('Phase Difference Comparison - Baseline vs Filtered (Theoretical: 120°)', 
-                 fontsize=16, fontweight='bold', y=0.98)
-    
-    # Apply tight layout
-    # plt.tight_layout(rect=[0, 0, 1, 0.97])
-    
-    # Save figure
-    output_path = base_dir / 'montage_phase_results.png'
+    plt.tight_layout(rect=[0, 0, 1, 0.97])
+    output_path = plots_dir / 'omega_errors.png'
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
-    print(f"\nPhase Montage saved to: {output_path}")
-    
+    print(f"Omega errors plot saved to: {output_path}")
     plt.close()
 
 
-if __name__ == '__main__':
-    # Preprocess all data once
-    print("=" * 80)
-    print("PREPROCESSING ALL DATA")
-    print("=" * 80)
-    processed_data = preprocess_all_data()
+def compute_itae_summary():
+    """
+    Compute and print ITAE (Integrated Time-weighted Absolute Error) summary table for all models, groups, and drones.
+    Time-weighting emphasizes steady-state errors over initial convergence errors.
+    """
+    nominal_omegas = {
+        '0_2': 0.2,
+        '0_4': 0.4,
+        '0_6': 0.6,
+        '0_8': 0.8
+    }
+    speed = speeds[0]
+    nominal_omega = nominal_omegas[speed]
     
-    print("\n" + "=" * 80)
-    print("CREATING PLOTS")
-    print("=" * 80)
+    # Create a summary dictionary
+    itae_summary = {model: {group: {drone: [] for drone in drones} for group in groups} 
+                    for model in models}
     
-    # Create all plots using preprocessed data
-    create_montage(processed_data)
-    create_3d_montage(processed_data)
-    create_phase_montage(processed_data)
+    for model in models:
+        for group in groups:           
+            csv_files = find_csv_files(group, model, speed)
+            
+            if len(csv_files) == 0:
+                print(f"    No CSV files found")
+                continue
+            
+            for drone in drones:
+                errors_all = []
+                time_refs = []
+                
+                for csv_file in csv_files:
+                    df = load_and_crop_csv(csv_file)
+                    
+                    if df is None or len(df) == 0:
+                        continue
+                    
+                    # Get omega column
+                    omega_cols = [col for col in df.columns if drone in col and 'omega' in col.lower()]
+                    
+                    if len(omega_cols) == 0:
+                        continue
+                    
+                    omega_col = omega_cols[0]
+                    
+                    # Get time column
+                    timestamp_cols = [col for col in df.columns if 'time' in col.lower() or 'stamp' in col.lower()]
+                    time_col = timestamp_cols[0] if len(timestamp_cols) > 0 else None
+                    if time_col is None:
+                        continue
+                    
+                    # Get valid data
+                    omega_valid = df[[time_col, omega_col]].dropna()
+                    
+                    if len(omega_valid) == 0:
+                        continue
+                    
+                    time_data = omega_valid[time_col].values
+                    omega_data = omega_valid[omega_col].values
+                    error_omega = omega_data - nominal_omega
+                    
+                    errors_all.append(error_omega)
+                    time_refs.append(time_data)
+                
+                # Compute mean ITAE across all seeds
+                if len(errors_all) > 0:
+                    longest_idx = np.argmax([len(t) for t in time_refs])
+                    time_common = time_refs[longest_idx]
+                    
+                    errors_interp = [np.interp(time_common, t, e, left=np.nan, right=np.nan) 
+                                    for t, e in zip(time_refs, errors_all)]
+                    stacked = np.array(errors_interp)
+                    mean_err = np.nanmean(stacked, axis=0)
+                    
+                    itae = compute_integrated_absolute_error(time_common, mean_err)
+                    itae_summary[model][group][drone] = itae
+    
+    # Print summary table using tabulate
+    print("\n" + "=" * 140)
+    print("SUMMARY TABLE - ITAE Values (Time-Weighted Absolute Error)")
+    print("=" * 140)
+    
+    for group in groups:
+        print(f"\n{group.upper()}:")
+        
+        table_data = []
+        for drone in drones:
+            itae_a = itae_summary['modelA'][group].get(drone, 0)
+            itae_c = itae_summary['modelC'][group].get(drone, 0)
+            
+            if itae_a > 0:
+                ratio = itae_c / itae_a
+            else:
+                ratio = 0
+            
+            table_data.append([
+                labels[drone],
+                f"{itae_a:.4f}",
+                f"{itae_c:.4f}",
+                f"{ratio:.2f}x"
+            ])
+        
+        print(tabulate(table_data, headers=['Drone', 'ModelA', 'ModelC', 'Ratio (C/A)'], 
+                      tablefmt='grid', stralign='center'))
 
+
+def compute_phase_diff_variance_snapshots():
+    """
+    Compute standard deviation of phase difference errors at time snapshots (20s, 40s, 60s).
+    Shows how inter-seed variance evolves over time.
+    """
+    time_snapshots = [20.0, 40.0, 60.0]
+    nominal_phase_diff_deg = 120.0
+    speed = speeds[0]
+    
+    # Store variance data: {model: {group: {drone: {t: {'mean': ..., 'std': ...}}}}}
+    variance_summary = {model: {group: {drone: {t: {'mean': None, 'std': None} for t in time_snapshots} 
+                                       for drone in drones} 
+                               for group in groups} 
+                       for model in models}
+    
+    for model in models:
+        for group in groups:
+            for drone in drones:
+                csv_files = find_csv_files(group, model, speed)
+                csv_files = [f for f in csv_files if 'processed' in f.name]
+                
+                if len(csv_files) == 0:
+                    continue
+                
+                # Get relationship
+                follower, leader = DRONE_RELATIONSHIPS[drone]
+                
+                phase_diff_errors_all = []
+                time_references = []
+                
+                for csv_file in csv_files:
+                    df = load_and_crop_csv(csv_file)
+                    
+                    if df is None or len(df) == 0:
+                        continue
+                    
+                    # Get time column
+                    timestamp_cols = [col for col in df.columns if 'time' in col.lower() or 'stamp' in col.lower()]
+                    time_col = timestamp_cols[0] if len(timestamp_cols) > 0 else None
+                    if time_col is None:
+                        continue
+                    
+                    # Get measured phases
+                    ego_meas_col = f"_{drone}_measured_phase"
+                    leader_meas_col = f"_{leader}_measured_phase"
+                    
+                    if not (ego_meas_col in df.columns and leader_meas_col in df.columns):
+                        continue
+                    
+                    # Extract and align phase data
+                    phase_leader_data = df[[time_col, leader_meas_col]].dropna().values
+                    phase_ego_data = df[[time_col, ego_meas_col]].dropna().values
+                    
+                    lengths = [len(phase_leader_data), len(phase_ego_data)]
+                    min_length = min(lengths) if lengths else 0
+                    if min_length == 0:
+                        continue
+                    
+                    phase_leader_data = phase_leader_data[:min_length, :]
+                    phase_ego_data = phase_ego_data[:min_length, :]
+                    
+                    time_ref = phase_ego_data[:, 0]
+                    phase_leader = phase_leader_data[:, 1]
+                    phase_ego = phase_ego_data[:, 1]
+                    
+                    # Compute phase difference error
+                    phase_diff_leader = wrap_to_pi(phase_leader - phase_ego)
+                    phase_diff_deg = np.rad2deg(phase_diff_leader)
+                    error_phase_diff = phase_diff_deg - nominal_phase_diff_deg
+                    
+                    phase_diff_errors_all.append(error_phase_diff)
+                    time_references.append(time_ref)
+                
+                # Compute variance at snapshots
+                if len(phase_diff_errors_all) > 0:
+                    longest_idx = np.argmax([len(t) for t in time_references])
+                    time_common = time_references[longest_idx]
+                    
+                    errors_interp = [np.interp(time_common, t, e, left=np.nan, right=np.nan) 
+                                    for t, e in zip(time_references, phase_diff_errors_all)]
+                    stacked = np.array(errors_interp)
+                    
+                    # Get mean and variance at each snapshot time
+                    for t_snap in time_snapshots:
+                        # Find closest time index
+                        idx_snap = np.argmin(np.abs(time_common - t_snap))
+                        mean_at_snap = np.nanmean(stacked[:, idx_snap])
+                        std_at_snap = np.nanstd(stacked[:, idx_snap])
+                        variance_summary[model][group][drone][t_snap] = {
+                            'mean': mean_at_snap,
+                            'std': std_at_snap
+                        }
+    
+    # Print summary tables
+    print("\n" + "=" * 140)
+    print("SUMMARY TABLE - Phase Difference Error Variance (Standard Deviation)")
+    print("=" * 140)
+    
+    for group in groups:
+        print(f"\n{group.upper()}:")
+        
+        table_data = []
+        for drone in drones:
+            std_20_a = variance_summary['modelA'][group][drone][20.0]
+            std_40_a = variance_summary['modelA'][group][drone][40.0]
+            std_60_a = variance_summary['modelA'][group][drone][60.0]
+            
+            std_20_c = variance_summary['modelC'][group][drone][20.0]
+            std_40_c = variance_summary['modelC'][group][drone][40.0]
+            std_60_c = variance_summary['modelC'][group][drone][60.0]
+            
+            # Format as "mean ± std" for each snapshot
+            def fmt_error_std(data_dict):
+                if data_dict is None or data_dict['mean'] is None:
+                    return "N/A"
+                return f"{data_dict['mean']:+.2f}°±{data_dict['std']:.2f}°"
+            
+            table_data.append([
+                labels[drone],
+                fmt_error_std(std_20_a),
+                fmt_error_std(std_40_a),
+                fmt_error_std(std_60_a),
+                fmt_error_std(std_20_c),
+                fmt_error_std(std_40_c),
+                fmt_error_std(std_60_c)
+            ])
+        
+        headers = [
+            'Drone',
+            'ModelA\n20s', 'ModelA\n40s', 'ModelA\n60s',
+            'ModelC\n20s', 'ModelC\n40s', 'ModelC\n60s'
+        ]
+        print(tabulate(table_data, headers=headers, tablefmt='grid', stralign='center'))
+
+
+if __name__ == "__main__":
+    print("\n" + "=" * 140)
+    print("PLOTTING PHASE DIFFERENCE ERRORS - EXPERIMENTS")
+    print("=" * 140)
+    plot_phases_differences_errors_experiments()
+
+    print("\n" + "=" * 140)
+    print("PLOTTING OMEGA ERRORS - EXPERIMENTS")
+    print("=" * 140)
+    plot_omega_errors_experiments()
+    
+    # Summary of metrics
+    compute_itae_summary()
+    compute_phase_diff_settling_summary()
+    compute_phase_diff_variance_snapshots()

@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
+from matplotlib.ticker import MultipleLocator
 import sys
 from pathlib import Path
 
@@ -126,9 +127,9 @@ def plot_embedding_trajectory_3d(model_name: str, omega: float = 0.2, dt: float 
     #           c='red', s=100, marker='s', label='End', edgecolors='black', linewidths=2, zorder=10)
     
     # Labels and title
-    ax.set_xlabel('X (m)', fontsize=12, labelpad=10)
-    ax.set_ylabel('Y (m)', fontsize=12, labelpad=10)
-    ax.set_zlabel('Z (m)', fontsize=12, labelpad=10)
+    ax.set_xlabel('x (m)', labelpad=15)
+    ax.set_ylabel('y (m)', labelpad=15)
+    ax.set_zlabel('z (m)', labelpad=15)
     # ax.set_title(f'Theoretical 3D Trajectory - {model_name}\n'
     #             f'ω = {omega} rad/s, radius = {radius} m', 
     #             fontsize=14, fontweight='bold', pad=20)
@@ -180,13 +181,18 @@ def plot_embedding_trajectory_3d(model_name: str, omega: float = 0.2, dt: float 
     ax.grid(True, alpha=0.3, linestyle=':')
     # ax.legend(loc='upper right', fontsize=10)
     
+    # Set axis ticks to steps of 0.5
+    ax.xaxis.set_major_locator(MultipleLocator(0.5))
+    ax.yaxis.set_major_locator(MultipleLocator(0.5))
+    ax.zaxis.set_major_locator(MultipleLocator(0.5))
+    
     # Set viewing angle
     ax.view_init(elev=20, azim=45)
     
     # Ensure z-axis label is visible
     ax.zaxis.set_rotate_label(False)
     
-    plt.tight_layout(rect=[0, 0, 1.05, 1])
+    # plt.tight_layout(rect=[0, 0, 1.075, 1])
     
     return fig, ax, trajectory, phases, times
 
@@ -261,8 +267,9 @@ def plot_all_models_comparison(omega: float = 0.2, dt: float = 0.01, radius: flo
 if __name__ == '__main__':
     # Example 1: Plot single model
     print("Plotting modelA trajectory...")
+    model_name = 'modelA'
     fig1, ax1, traj1, phases1, times1 = plot_embedding_trajectory_3d(
-        model_name='modelC',
+        model_name=model_name,
         omega=0.2,
         dt=0.01,
         radius=1.0,
@@ -270,18 +277,18 @@ if __name__ == '__main__':
         show_projection=True,
         show_phase_color=True
     )
-    plt.savefig('/home/paulo/Documents/DATA/trajectory_modelA.png', dpi=150, bbox_inches='tight')
-    print(f"Saved trajectory_modelA.png")
+    plt.savefig(f'/home/paulo/Documents/k_10/plots/trajectory_{model_name}.png', dpi=150)
+    print(f"Saved trajectory_{model_name}.png")
     
     # Example 2: Plot all models comparison
     print("\nPlotting all models comparison...")
     fig2 = plot_all_models_comparison(omega=0.2, dt=0.01, radius=2.0)
-    plt.savefig('/home/paulo/Documents/DATA/trajectories_all_models.png', dpi=150, bbox_inches='tight')
+    plt.savefig('/home/paulo/Documents/k_10/plots/trajectories_all_models.png', dpi=150, bbox_inches='tight')
     print(f"Saved trajectories_all_models.png")
     
     # Print trajectory statistics
     print("\n" + "="*60)
-    print("Trajectory Statistics for modelA:")
+    print(f"Trajectory Statistics for {model_name}:")
     print("="*60)
     print(f"Duration: {times1[-1]:.2f} seconds")
     print(f"Number of points: {len(traj1)}")

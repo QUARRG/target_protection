@@ -1294,8 +1294,8 @@ def plot_phases_differences_errors_experiments():
     experiment_labels = [
         'Filter 1 + Model A',
         'Filter 2 + Model A',
-        'Filter 1 + Model C',
-        'Filter 2 + Model C'
+        'Filter 1 + Model B',
+        'Filter 2 + Model B'
     ]
     
     for i, speed in enumerate(speeds):
@@ -2385,15 +2385,15 @@ if __name__ == '__main__':
     # print("=" * 80)
     # plot_radius_errors_experiments()
 
-    # print("\n" + "=" * 80)
-    # print("PLOTTING PHASE DIFFERENCE ERRORS - EXPERIMENTS")
-    # print("=" * 80)
-    # plot_phases_differences_errors_experiments()
-
     print("\n" + "=" * 80)
-    print("PLOTTING CONTROLLER GAINS - EXPERIMENTS")
+    print("PLOTTING PHASE DIFFERENCE ERRORS - EXPERIMENTS")
     print("=" * 80)
-    plot_controller_gains_experiments()
+    plot_phases_differences_errors_experiments()
+
+    # print("\n" + "=" * 80)
+    # print("PLOTTING CONTROLLER GAINS - EXPERIMENTS")
+    # print("=" * 80)
+    # plot_controller_gains_experiments()
 
     # print("\n" + "=" * 80)
     # print("PLOTTING OMEGA ERRORS - GPS GROUP")
