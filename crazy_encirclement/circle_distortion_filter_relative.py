@@ -126,6 +126,7 @@ class CircleDistortion(Node):
             StringArray, '/agents_order',
             self._order_callback,
             10)    
+        
         # Subscription to Vicon positions to get initial poses for all drones
         self.create_subscription(
             PoseStamped, f'/{self.robot}/vicon_position',

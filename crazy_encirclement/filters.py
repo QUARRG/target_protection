@@ -2,7 +2,7 @@ import numpy as np
 from rclpy.node import Node
 from typing import Callable
 from std_msgs.msg import Float32
-from geometry_msgs.msg import PoseStamped, Point, Quaternion, PoseWithCovarianceStamped, PoseWithCovariance
+from geometry_msgs.msg import PoseStamped, Point, Quaternion, PoseWithCovarianceStamped
 from scipy.linalg import expm
 
 
@@ -23,14 +23,18 @@ def omega_func_modelD(theta: float) -> np.ndarray:
 
 def omega_func_modelE(theta: float) -> np.ndarray:
     return np.asarray([0.0, 0.0, 0.])
+
 def omega_func_modelF(theta: float) -> np.ndarray:
     return np.asarray([0.4 * (np.cos(theta) * np.sin(theta)-np.sin(theta)**3), 0.4*np.cos(theta)**2*np.sin(-theta), 0.])
+
+
 REGISTRED_OMEGA_FUNCTIONS = {
     'modelA': omega_func_modelA,
     'modelB': omega_func_modelB,
     'modelC': omega_func_modelC,
     'modelD': omega_func_modelD,
     'modelE': omega_func_modelE,
+    'modelF': omega_func_modelF,
 }
 # ----------------------------------------------------------------------
 
@@ -351,7 +355,7 @@ class FilterRelative(BaseFilter):
         self.P = 0.5 * np.add(self.P, self.P.T)
         
         return Float32(data=get_phase(self.Rc))
-
+    
 
 class BaselineFilter(BaseFilter):
     ''' Baseline filter without state estimation for encirclement tasks.
@@ -393,11 +397,9 @@ class BaselineFilter(BaseFilter):
         Rc = build_Rc(prev_ego_phase)
         p = Rc.T @ Re.T @ current_pose
         self.radius  = np.sqrt(p[0]**2 + p[1]**2 + p[2]**2)
-
         pose = Re.T @ current_pose
         current_ego_phase = wrap_to_2pi(np.arctan2(pose[1], pose[0]))
         # Rc = build_Rc(current_ego_phase)
-
         # curr_ego_phase = np.arctan2(p[1], p[0])
 
         omega, gain = phase_controller(current_ego_phase, prev_leader_phase, prev_follower_phase, self.omega_nominal, self.k_phi)
@@ -407,7 +409,6 @@ class BaselineFilter(BaseFilter):
         desired_ego_phase = wrap_to_2pi(np.arctan2(desired_ego_pose[1], desired_ego_pose[0]))
         des_Re = build_Re(self.embedding_fn, desired_ego_phase)
         desired_ego_pose_3D = des_Re@desired_ego_pose
-        
         
         # Publish predicted pose, phase and controller gain
         current_pose_msg, desired_pose_msg, phase_msg, radius_msg = self.build_pose_phase_msgs()
@@ -421,7 +422,7 @@ class BaselineFilter(BaseFilter):
         desired_pose_msg.pose.orientation = Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
         radius_msg = Float32()
         radius_msg.data = self.radius
-        # self.pub_pose.publish(current_pose_msg)
+        self.pub_pose.publish(current_pose_msg)
         self.pub_phase.publish(phase_msg_test)
         self.pub_radius.publish(radius_msg)
 
