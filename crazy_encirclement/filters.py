@@ -405,7 +405,7 @@ class BaselineFilter(BaseFilter):
         omega, gain = phase_controller(current_ego_phase, prev_leader_phase, prev_follower_phase, self.omega_nominal, self.k_phi)
         # Update phase
         des_ego_pose_2D = np.array([self.radius_nominal*np.cos(current_ego_phase),self.radius_nominal*np.sin(current_ego_phase), 0])
-        desired_ego_pose = exp_SO3(np.asarray([0., 0., omega *0.4])) @ des_ego_pose_2D
+        desired_ego_pose = exp_SO3(np.asarray([0., 0., omega *0.6])) @ des_ego_pose_2D
         desired_ego_phase = wrap_to_2pi(np.arctan2(desired_ego_pose[1], desired_ego_pose[0]))
         des_Re = build_Re(self.embedding_fn, desired_ego_phase)
         desired_ego_pose_3D = des_Re@desired_ego_pose

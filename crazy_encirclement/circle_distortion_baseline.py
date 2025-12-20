@@ -312,7 +312,7 @@ class CircleDistortion(Node):
         self.r_landing = np.zeros((3, len(self.t_landing)))
         self.r_landing[0,:] += self.final_pose[0] * np.ones(len(self.t_landing))
         self.r_landing[1,:] += self.final_pose[1] * np.ones(len(self.t_landing))
-        self.r_landing[2,:] = self.hover_height * (self.t_landing / t_max)
+        self.r_landing[2,:] = self.final_pose[2] * (self.t_landing / t_max)
 
     def publish_metadata(self):
         """Publish experiment metadata every 10 seconds."""
