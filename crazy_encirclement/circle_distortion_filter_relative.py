@@ -221,9 +221,9 @@ class CircleDistortion(Node):
         self.publish_gain  = self.create_publisher(Float32, f'/{self.robot}/filtered/controller_gain', 10)
         self.publish_phase_diff_leader = self.create_publisher(Float32, f'/{self.robot}/filtered/phase_diff/leader', 10)
         self.publish_phase_diff_follower = self.create_publisher(Float32, f'/{self.robot}/filtered/phase_diff/follower', 10)
-        self.publish_estimated_omega_x   = self.create_publisher(Float32, f'/{self.robot}/baseline/measured/omega/x', 10)
-        self.publish_estimated_omega_y   = self.create_publisher(Float32, f'/{self.robot}/baseline/measured/omega/y', 10)
-        self.publish_estimated_omega_z   = self.create_publisher(Float32, f'/{self.robot}/baseline/measured/omega/z', 10)
+        self.publish_estimated_omega_x   = self.create_publisher(Float32, f'/{self.robot}/filtered/measured/omega/x', 10)
+        self.publish_estimated_omega_y   = self.create_publisher(Float32, f'/{self.robot}/filtered/measured/omega/y', 10)
+        self.publish_estimated_omega_z   = self.create_publisher(Float32, f'/{self.robot}/filtered/measured/omega/z', 10)
 
         # Metadata publisher
         self.metadata_pub = self.create_publisher(Metadata, f'/{self.robot}/metadata', 10)

@@ -4,10 +4,20 @@ import numpy as np
 from rclpy.node import Node
 from geometry_msgs.msg import PoseStamped
 from crazyflie_interfaces.msg import StringArray, Position
+from motion_capture_tracking_interfaces.msg import NamedPoseArray
 from std_msgs.msg import Bool
 from std_srvs.srv import Empty
 from std_msgs.msg import Float32
-from crazy_encirclement.filters import FilterGPS, wrap_to_2pi, wrap_to_pi, phase_controller
+from crazy_encirclement.filters import (
+    build_Re,
+    build_Rc,
+    get_phase,
+    FilterGPS,
+    FilterRelative,
+    wrap_to_2pi,
+    wrap_to_pi,
+    phase_controller
+)
 from crazy_encirclement_interfaces.msg import Metadata
 
 
@@ -16,15 +26,19 @@ class CircleDistortion(Node):
         """
             Node that sends the crazyflie to a desired position
             The desired position comes from the distortion of a circle
+            
+            Strategy: Use GPS + Relative filters with communication outage simulation
+            - 0-20s: Use GPS filter + subscribe to leader/follower phases
+            - 20-40s: Communication outage - use relative filters only
+            - 40-60s: Resume GPS filter + subscribe to leader/follower phases
         """
         super().__init__('circle_distortion')
         self.info = self.get_logger().info
-        self.info('Circle distortion node has been started.')
+        self.info('Circle distortion node (combined filters) has been started.')
 
         # Parameters
         self.declare_parameter('robot', 'C20')
         self.declare_parameter('number_of_agents', 4)
-        self.declare_parameter('initial_phase', '0.0')
         self.declare_parameter('radius_nominal', 1.0)
         self.declare_parameter('omega_nominal', 0.8)
         self.declare_parameter('k_phi', 8.0)
@@ -42,19 +56,31 @@ class CircleDistortion(Node):
         self.hover_height = float(self.get_parameter('hover_height').value)
 
         # Filter parameters
-        self.declare_parameter('P', [0.0001, 0.0001, 0.25, 0.0001])
-        self.declare_parameter('Q', [0.0, 0.0, 0.001, 0.0001])
-        self.declare_parameter('V', [0.1, 0.1, 0.1])
+        self.declare_parameter('P_ego', [0.0001, 0.0001, 0.25, 0.0001])
+        self.declare_parameter('Q_ego', [0.0, 0.0, 0.001, 0.0001])
+        self.declare_parameter('V_ego', [0.1, 0.1, 0.1])
+        self.declare_parameter('P_rel', [0.01, 0.01, 0.25])
+        self.declare_parameter('Q_rel', [0.0, 0.0, 0.01])
+        self.declare_parameter('V_rel', [0.1, 0.1, 0.1])
         self.declare_parameter('predict_hz', 50.0)
         self.declare_parameter('update_hz', 10.0)
         self.declare_parameter('seed', 42)
 
-         # Get filter parameters
-        P_list = self.get_parameter('P').value
-        Q_list = self.get_parameter('Q').value
-        V_list = self.get_parameter('V').value
+        # Time parameters for communication outage simulation
+        self.declare_parameter('outage_start_time', 20.0)  # Start communication outage at 20s
+        self.declare_parameter('outage_duration', 20.0)    # Outage lasts 20s (until 40s)
+
+        # Get filter parameters
+        self.P_ego_list = self.get_parameter('P_ego').value
+        self.Q_ego_list = self.get_parameter('Q_ego').value
+        self.V_ego_list = self.get_parameter('V_ego').value
+        self.P_rel_list = self.get_parameter('P_rel').value
+        self.Q_rel_list = self.get_parameter('Q_rel').value
+        self.V_rel_list = self.get_parameter('V_rel').value
         self.predict_hz = self.get_parameter('predict_hz').value
         self.update_hz  = self.get_parameter('update_hz').value
+        self.outage_start_time = self.get_parameter('outage_start_time').value
+        self.outage_duration = self.get_parameter('outage_duration').value
 
         # Set random seed
         seed = self.get_parameter('seed').value
@@ -66,7 +92,7 @@ class CircleDistortion(Node):
         # Flags and variables
         self.timer_period = 1.0 / self.predict_hz
         self.initial_phase = 0.0
-        self.initial_radius = self.radius_nominal  # Initialize with nominal value
+        self.initial_radius = 1.0
         self.initial_pose = np.zeros(3)
         self.order = []
 
@@ -74,14 +100,13 @@ class CircleDistortion(Node):
         self.has_final = False
         self.land_flag = False
         self.has_order = False
-        self.has_phase_follower = False
         self.has_phase_leader = False
+        self.has_phase_follower = False
 
         self.final_pose   = np.zeros(3)
         self.current_pose = np.zeros(3)
         self.previous_pose = np.zeros(3)
         self.previous_pose_time = 0.0
-        self.initial_pose = np.zeros(3)
         
         self.leader   = None
         self.follower = None     
@@ -90,6 +115,10 @@ class CircleDistortion(Node):
         self.i_takeoff = 0
 
         self.phases = np.zeros(3)  # [leader, ego, follower]
+        self.encirclement_start_time = None  # Track when encirclement started
+        self.in_communication_outage = False  # Track outage state
+        self.outage_started = False  # Flag to detect outage transition
+        self.outage_ended = False    # Flag to detect outage ending transition
 
         self.state = 0
         # 0-take-off, 1-hover, 2-encirclement, 3-landing
@@ -110,7 +139,7 @@ class CircleDistortion(Node):
             self._encircle_callback,
             10)
 
-        # Subscription to Vicon positions of the robot that are coming from the gps node
+        # Subscription to Vicon positions of the robot
         self.create_subscription(
             PoseStamped, f'/{self.robot}/vicon_position',
             self._poses_changed,
@@ -132,36 +161,93 @@ class CircleDistortion(Node):
             rclpy.spin_once(self, timeout_sec=0.1)
         
         self.info(f"Initial pose received: phase={self.initial_phase:.3f}, radius={self.initial_radius:.3f}")
-        self.info(f"Covariance matrix P: {P_list}")
 
-        # Create filter instance using actual measured initial values
-        self.filter_params = {
-            'P': P_list,
-            'Q': Q_list,
-            'V': V_list,
+        # Create GPS filter instance
+        self.filter_gps_params = {
+            'P': self.P_ego_list,
+            'Q': self.Q_ego_list,
+            'V': self.V_ego_list,
             'radius_nominal': self.radius_nominal,
             'radius_guess': self.initial_radius + np.random.normal(0, 0.15),
             'phase_guess': self.initial_phase + np.random.normal(0, 0.1),
             'frame_id': self.frame_id
         }
-        self.filter = FilterGPS(self.robot, self.embedding_fn_name, self.filter_params, self)
+        self.filter_gps = FilterGPS(self.robot, self.embedding_fn_name, self.filter_gps_params, self)
 
-        # Create subscribers for the other agents' filtered phases
-        self.create_subscription(Float32, f'/{self.leader}/filtered/phase',   self._phase_callback_leader, 1)
-        self.create_subscription(Float32, f'/{self.follower}/filtered/phase', self._phase_callback_follower, 1)
+        # Subscribe to leader and follower vicon positions for relative filter initialization
+        self.has_leader_initial_pose = False
+        self.has_follower_initial_pose = False
+        self.leader_initial_phase = 0.0
+        self.follower_initial_phase = 0.0
+        self.leader_initial_radius = 0.0
+        self.follower_initial_radius = 0.0
+        
+        self.create_subscription(
+            PoseStamped, f'/{self.leader}/vicon_position',
+            self._leader_vicon_callback,
+            10
+        )
+        
+        self.create_subscription(
+            PoseStamped, f'/{self.follower}/vicon_position',
+            self._follower_vicon_callback,
+            10
+        )
 
-        # Create subscriber for filter updates using the GPS measurements
+        # Wait until initial poses are received from all drones
+        while (not self.has_leader_initial_pose or not self.has_follower_initial_pose):
+            rclpy.spin_once(self, timeout_sec=0.1)
+
+        # Create relative filter instances
+        self.filter_relative_leader_params = {
+            'P': self.P_rel_list,
+            'Q': self.Q_rel_list,
+            'V': self.V_rel_list,
+            'radius_nominal': self.radius_nominal,
+            'radius_guess': self.leader_initial_radius + np.random.normal(0, 0.15),
+            'phase_guess': self.leader_initial_phase + np.random.normal(0, 0.1),
+            'frame_id': self.frame_id
+        }
+        self.filter_relative_leader = FilterRelative(
+            self.robot, self.embedding_fn_name, self.filter_relative_leader_params, self
+        )
+
+        self.filter_relative_follower_params = {
+            'P': self.P_rel_list,
+            'Q': self.Q_rel_list,
+            'V': self.V_rel_list,
+            'radius_nominal': self.radius_nominal,
+            'radius_guess': self.follower_initial_radius + np.random.normal(0, 0.15),
+            'phase_guess': self.follower_initial_phase + np.random.normal(0, 0.1),
+            'frame_id': self.frame_id
+        }
+        self.filter_relative_follower = FilterRelative(
+            self.robot, self.embedding_fn_name, self.filter_relative_follower_params, self
+        )
+        
+        # Initialize phases with initial values
+        self.phases = np.array([self.leader_initial_phase, self.initial_phase, self.follower_initial_phase])
+
+        # Create subscriber for GPS measurements
         self.create_subscription(
             PoseStamped,
             f'/{self.robot}/gps_position',
-            self.update_callback,
+            self.update_callback_gps,
+            10
+        )
+
+        # Create subscriber for all drones' positions (for relative filter updates)
+        self.create_subscription(
+            NamedPoseArray,
+            f'/{self.robot}/gps_scanner_position',
+            self.update_callback_relative,
             10
         )
 
         # Crazyflie position command publisher
         self.position_pub = self.create_publisher(Position, f'/{self.robot}/cmd_position', 10)
 
-        # Publishers for phase differences
+        # Publishers for phase differences and diagnostics
         self.publish_omega = self.create_publisher(Float32, f'/{self.robot}/filtered/omega', 10)
         self.publish_gain  = self.create_publisher(Float32, f'/{self.robot}/filtered/controller_gain', 10)
         self.publish_phase_diff_leader = self.create_publisher(Float32, f'/{self.robot}/filtered/phase_diff/leader', 10)
@@ -174,7 +260,10 @@ class CircleDistortion(Node):
         self.metadata_pub = self.create_publisher(Metadata, f'/{self.robot}/metadata', 10)
         self.metadata_timer = self.create_timer(10.0, self.publish_metadata)
         
-        # input("Press Enter to takeoff")
+        # Create subscribers for leader/follower phases (will use only when not in outage)
+        self.create_subscription(Float32, f'/{self.leader}/filtered/phase',   self._phase_callback_leader, 1)
+        self.create_subscription(Float32, f'/{self.follower}/filtered/phase', self._phase_callback_follower, 1)
+        
         self.timer = self.create_timer(self.timer_period, self.timer_callback)
 
     def timer_callback(self):
@@ -185,18 +274,48 @@ class CircleDistortion(Node):
                 if self.has_initial_pose:
                     self.phases[1] = self.initial_phase
                     self.takeoff()
-                    self.filter.pub_phase.publish(Float32(data=self.phases[1]))
+                    self.filter_gps.pub_phase.publish(Float32(data=self.phases[1]))
                     self.publish_phase_differences()
 
             # Hover state
             elif self.state == 1:
                 self.hover()
-                self.filter.pub_phase.publish(Float32(data=self.phases[1]))
+                self.filter_gps.pub_phase.publish(Float32(data=self.phases[1]))
                 self.publish_phase_differences()
             
             # Encirclement state
             elif self.state == 2:
-                # Computing desired phi_dot based on the leader and follower phases
+                # Track encirclement time and determine if in communication outage
+                if self.encirclement_start_time is None:
+                    self.encirclement_start_time = time.time()
+                
+                time_since_encirclement_start = time.time() - self.encirclement_start_time
+                outage_end_time = self.outage_start_time + self.outage_duration
+                was_in_outage = self.in_communication_outage
+                self.in_communication_outage = (self.outage_start_time <= time_since_encirclement_start <= outage_end_time)
+                
+                # Handle transition INTO outage (GPS -> Relative)
+                if self.in_communication_outage and not was_in_outage and not self.outage_started:
+                    self.info("=== COMMUNICATION OUTAGE STARTED ===")
+                    self.info("Synchronizing relative filters with recent states")
+                    self._sync_relative_filters()
+                    self.outage_started = True
+                    self.outage_ended = False
+                
+                # Handle transition OUT of outage (Relative -> GPS)
+                if not self.in_communication_outage and was_in_outage and not self.outage_ended:
+                    self.info("=== COMMUNICATION OUTAGE ENDED ===")
+                    self.outage_ended = True
+                    self.outage_started = False
+                
+                # Use appropriate phases based on outage status
+                if not self.in_communication_outage:
+                    # Normal operation: use leader/follower phases if available
+                    if not self.has_phase_leader or not self.has_phase_follower:
+                        self.info("Waiting for leader/follower phase messages...")
+                        return
+                
+                # Compute desired omega based on current phases
                 omega, gain = phase_controller(self.phases[1], self.phases[0], self.phases[2], self.omega_nominal, self.k_phi)
                 omega_msg = Float32()
                 omega_msg.data = omega
@@ -206,13 +325,12 @@ class CircleDistortion(Node):
                 gain_msg.data = gain
                 self.publish_gain.publish(gain_msg)
 
-                # Propagating the filter (prediction step)
-                phase, current_position, desired_position = self.filter.predict(omega, self.timer_period)
-
-                # Updating internal parameters
+                # Propagate GPS filter (prediction step)
+                phase, current_position, desired_position = self.filter_gps.predict(omega, self.timer_period)
                 self.phases[1] = phase.data
                 self.publish_phase_differences()
 
+                # Send position command
                 target_r = np.array([desired_position.pose.position.x,
                                      desired_position.pose.position.y,
                                      desired_position.pose.position.z + self.hover_height])
@@ -231,33 +349,78 @@ class CircleDistortion(Node):
                         rclpy.shutdown()   
 
         except KeyboardInterrupt:
-            self.info('Exiting open loop command node')
+            self.info('Exiting circle node')
     
-    def update_callback(self, gps_pose: PoseStamped):
-        ''' Callback to update the filter with GPS measurements (update step). '''
-        if self.state != 2:
-            return  # Only update during encirclement state
+    def update_callback_gps(self, gps_pose: PoseStamped):
+        ''' Callback to update GPS filter with measurements. '''
+        if self.state != 2 or self.in_communication_outage:
+            return  # Only update during normal encirclement (not in outage)
         
         y = np.array([gps_pose.pose.position.x,
                       gps_pose.pose.position.y,
                       gps_pose.pose.position.z]).reshape((3, 1))
-        phase, current_position, desired_position = self.filter.update(y)
+        phase, current_position, desired_position = self.filter_gps.update(y)
 
-        # Updating internal parameters
-        # self.phases[1] = phase.data
-        # self.publish_phase_differences()
+    def update_callback_relative(self, gps_scanner_poses: NamedPoseArray):
+        ''' Callback to update relative filters with measurements. '''
+        if self.state != 2 or not self.in_communication_outage:
+            return  # Only use relative filters during communication outage
+        
+        y_ego_gps = None
+        y_rel_leader = None
+        y_rel_follower = None
 
-        # target_r = np.array([desired_position.pose.pose.position.x,
-        #                      desired_position.pose.pose.position.y,
-        #                      desired_position.pose.pose.position.z + self.hover_height])
-        # self.send_position(target_r)
+        # Extract measurements for leader and follower from scanner
+        for pose in gps_scanner_poses.poses:
+            if pose.name == self.robot:
+                y_ego_gps = np.array([pose.pose.position.x,
+                                  pose.pose.position.y,
+                                  pose.pose.position.z]).reshape((3, 1))
+            elif pose.name == self.leader:
+                y_rel_leader = np.array([pose.pose.position.x,
+                                        pose.pose.position.y,
+                                        pose.pose.position.z]).reshape((3, 1))
+            elif pose.name == self.follower:
+                y_rel_follower = np.array([pose.pose.position.x,
+                                          pose.pose.position.y,
+                                          pose.pose.position.z]).reshape((3, 1))
+        
+        # Updating GPS filter
+        phase_ego, current_position, desired_position = self.filter_gps.update(y_ego_gps)
+        
+        # Get current ego position from GPS filter
+        qi = np.asarray([current_position.pose.pose.position.x,
+                         current_position.pose.pose.position.y,
+                         current_position.pose.pose.position.z]).reshape((3, 1))
+        Rei = build_Re(self.filter_gps.embedding_fn, self.phases[1])
+        Rci = self.filter_gps.Rc
+
+        # Update relative filter for leader
+        rel_noise = np.random.multivariate_normal(np.zeros(3), np.diag(np.square(self.V_rel_list))).reshape((3, 1))
+        y_leader = (Rci.T @ Rei.T @ y_rel_leader) + rel_noise
+        phase_leader = self.filter_relative_leader.update(y_leader, Rei, Rci, qi)
+        self.phases[0] = phase_leader.data
+
+        # Update relative filter for follower
+        rel_noise = np.random.multivariate_normal(np.zeros(3), np.diag(np.square(self.V_rel_list))).reshape((3, 1))
+        y_follower = (Rci.T @ Rei.T @ y_rel_follower) + rel_noise
+        phase_follower = self.filter_relative_follower.update(y_follower, Rei, Rci, qi)
+        self.phases[2] = phase_follower.data
+
+    def _sync_relative_filters(self):
+        """
+        Synchronize relative filters with recent phases when entering communication outage.
+        """
+        try:
+            # Copy GPS filter's rotation matrix (Rc) to relative filters
+            self.filter_relative_leader.Rc   = build_Rc(wrap_to_2pi(self.phases[0]))
+            self.filter_relative_follower.Rc = build_Rc(wrap_to_2pi(self.phases[2]))
+        except Exception as e:
+            self.info(f"Error synchronizing relative filters: {e}")
 
     def _poses_changed(self, robot_pose: PoseStamped):
-        """ Topic update callback to the motion capture lib's
-            poses topic to send through the external position
-            to the crazyflie. All steps based on the Vicon position.
-        """
-        # Initialize the initial pose and phase if not already set using vicon data
+        """ Callback for robot's Vicon position. """
+        # Initialize the initial pose and phase if not already set
         if not self.has_initial_pose:      
             self.initial_pose[0] = robot_pose.pose.position.x
             self.initial_pose[1] = robot_pose.pose.position.y
@@ -267,7 +430,6 @@ class CircleDistortion(Node):
             self.previous_pose = self.initial_pose.copy()
             self.previous_pose_time = robot_pose.header.stamp.sec + robot_pose.header.stamp.nanosec * 1e-9
 
-            # Adjusting filter parameters based on initial position
             self.takeoff_traj(4)
             self.has_initial_pose = True    
             
@@ -277,9 +439,9 @@ class CircleDistortion(Node):
             self.current_pose[1] = robot_pose.pose.position.y
             self.current_pose[2] = robot_pose.pose.position.z
 
-            # Estimate 3D omega using the delta pose and velocity cross product
+            # Estimate 3D omega using delta pose and velocity cross product
             delta_pose = self.current_pose - self.previous_pose
-            delta_velocity = delta_pose / ( (robot_pose.header.stamp.sec + robot_pose.header.stamp.nanosec * 1e-9) - self.previous_pose_time )
+            delta_velocity = delta_pose / ((robot_pose.header.stamp.sec + robot_pose.header.stamp.nanosec * 1e-9) - self.previous_pose_time)
             omega_3D = np.cross(self.previous_pose, delta_velocity) / (np.linalg.norm(self.previous_pose)**2 + 1e-6)
             self.previous_pose = self.current_pose.copy()
             self.previous_pose_time = robot_pose.header.stamp.sec + robot_pose.header.stamp.nanosec * 1e-9
@@ -297,22 +459,37 @@ class CircleDistortion(Node):
             self.landing_traj(3)
             self.has_final = True
 
+    def _leader_vicon_callback(self, msg: PoseStamped):
+        ''' Callback to receive leader's initial Vicon position. '''
+        if not self.has_leader_initial_pose:
+            leader_pose = np.array([msg.pose.position.x, msg.pose.position.y, msg.pose.position.z])
+            self.leader_initial_phase = wrap_to_2pi(np.arctan2(leader_pose[1], leader_pose[0]))
+            self.leader_initial_radius = np.sqrt(leader_pose[0]**2 + leader_pose[1]**2)
+            self.has_leader_initial_pose = True
+            self.info(f"Leader initial phase: {self.leader_initial_phase:.3f}, radius: {self.leader_initial_radius:.3f}")
+
+    def _follower_vicon_callback(self, msg: PoseStamped):
+        ''' Callback to receive follower's initial Vicon position. '''
+        if not self.has_follower_initial_pose:
+            follower_pose = np.array([msg.pose.position.x, msg.pose.position.y, msg.pose.position.z])
+            self.follower_initial_phase = wrap_to_2pi(np.arctan2(follower_pose[1], follower_pose[0]))
+            self.follower_initial_radius = np.sqrt(follower_pose[0]**2 + follower_pose[1]**2)
+            self.has_follower_initial_pose = True
+            self.info(f"Follower initial phase: {self.follower_initial_phase:.3f}, radius: {self.follower_initial_radius:.3f}")
+
     def _phase_callback_leader(self, msg: Float32):
-        ''' Callback to receive the filtered phase of the leader agent. '''
+        ''' Callback to receive filtered phase of the leader agent. '''
         self.has_phase_leader = True
-        # Update phase value (msg.data can be 0.0, which is a valid phase)
         self.phases[0] = msg.data
 
     def _phase_callback_follower(self, msg: Float32):
-        ''' Callback to receive the filtered phase of the follower agent. '''
+        ''' Callback to receive filtered phase of the follower agent. '''
         self.has_phase_follower = True
-        # Update phase value (msg.data can be 0.0, which is a valid phase)
         self.phases[2] = msg.data
 
     def _order_callback(self, msg: StringArray):
         ''' Callback to receive the order of agents. '''
         if not self.has_order:
-            # self.info(f"Phase received: {msg.data}")
             order = msg.data
             for robot in order:
                 if robot == self.robot:
@@ -336,9 +513,8 @@ class CircleDistortion(Node):
         self.publish_phase_diff_follower.publish(Float32(data=diff_follower))
 
     def takeoff(self):
-        ''' Take-off procedure to reach the hover height. '''
+        ''' Take-off procedure to reach hover height. '''
         self.send_position(self.r_takeoff[:, self.i_takeoff])
-        # Increment take-off index or switch to hover state
         if self.i_takeoff < len(self.t_takeoff)-1:
             self.i_takeoff += 1
         else:
@@ -364,10 +540,10 @@ class CircleDistortion(Node):
     def publish_metadata(self):
         """Publish experiment metadata every 10 seconds."""
         metadata = Metadata()
-        metadata.group_name = 'gps'
+        metadata.group_name = 'combined'
         metadata.drone_id = self.robot
         metadata.seed = int(self.get_parameter('seed').value)
-        metadata.filter_type = 'FilterGPS'
+        metadata.filter_type = 'FilterCombined'
         metadata.embedding_fn_name = self.embedding_fn_name
         metadata.frame_id = self.frame_id
         metadata.radius_nominal = self.radius_nominal
@@ -377,9 +553,9 @@ class CircleDistortion(Node):
         metadata.p_ego = [float(x) for x in self.get_parameter('P').value]
         metadata.q_ego = [float(x) for x in self.get_parameter('Q').value]
         metadata.v_ego = [float(x) for x in self.get_parameter('V').value]
-        metadata.p_rel = []
-        metadata.q_rel = []
-        metadata.v_rel = []
+        metadata.p_rel = [float(x) for x in self.get_parameter('P_rel').value]
+        metadata.q_rel = [float(x) for x in self.get_parameter('Q_rel').value]
+        metadata.v_rel = [float(x) for x in self.get_parameter('V_rel').value]
         metadata.predict_hz = self.predict_hz
         metadata.update_hz = self.update_hz
         metadata.phase_guess = self.initial_phase
@@ -395,10 +571,10 @@ class CircleDistortion(Node):
     def _encircle_callback(self, msg):
         ''' Callback to initiate encirclement procedure. '''
         self.state = 2
+        self.encirclement_start_time = time.time()
 
     def hover(self):
-        ''' Hovering procedure at the hover height. '''
-        # self.phase_pub.publish(self.phi_cur)
+        ''' Hovering procedure at hover height. '''
         msg = Position()
         msg.x = self.initial_pose[0]
         msg.y = self.initial_pose[1]
