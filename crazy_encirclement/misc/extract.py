@@ -7,10 +7,10 @@ from tqdm import tqdm
 
 
 # Define the root directory containing the bag files
-rootdir = os.path.join('/home/paulo/Documents/k_10/')
+rootdir = os.path.join('/home/paulo/Documents/k_03/')
 
 # Flag to force extraction even if extracted files already exist
-force_extraction = False
+force_extraction = True
 
 # Find all .db3 files in the rootdir
 bag_files = []

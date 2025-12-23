@@ -21,7 +21,7 @@ warnings.filterwarnings('ignore')
 plt.rcParams.update({'text.usetex': True, 'font.size': 20, 'figure.dpi': 150})
 
 # Configuration
-base_dir = Path('/home/paulo/Documents/k_10/')
+base_dir = Path('/home/paulo/Documents/k_03/')
 plots_dir = base_dir / 'plots'
 plots_dir.mkdir(exist_ok=True)
 groups = ['baseline',
@@ -29,10 +29,11 @@ groups = ['baseline',
           'relative',
         #   'combined',
         #   'combined_wind_mild',
-          'combined_wind_strong',
+        #   'combined_wind_strong',
         #   'total_outage',
         #   'total_outage_wind_mild',
-          'total_outage_wind_strong']
+        #   'total_outage_wind_strong'
+          ]
 models = ['modelA', 'modelC']
 speeds = ['0_2']
 k_phi = 10.0

@@ -10,34 +10,34 @@ from tabulate import tabulate
 
 warnings.filterwarnings('ignore')
 
-plt.rcParams.update({'text.usetex': True, 'font.size': 20, 'figure.dpi': 150})
+plt.rcParams.update({'text.usetex': True, 'font.size': 24, 'figure.dpi': 150})
 
 # helpers
 from crazy_encirclement.filters import wrap_to_pi
 
 # Configuration
-base_dir = Path('/home/paulo/Documents/k_10_final/')
+base_dir = Path('/home/paulo/Documents/k_03/')
 plots_dir = base_dir / 'plots'
 plots_dir.mkdir(exist_ok=True)
 
 groups_list = [
     # 'baseline',
-    # 'gps',
-    # 'relative',
-    'combined',
+    'gps',
+    'relative',
+    # 'combined',
     # 'total_outage_wind_mild',
     # 'total_outage_wind_strong',
     # 'combined_wind_mild',
-    'combined_wind_strong'
+    # 'combined_wind_strong'
     ]
 
 group_labels = [
     # 'Baseline',
-    # 'Filter 1',
-    # 'Filter 2',
+    'Filter 1',
+    'Filter 2',
     # 'Filter 1 + 2 (GPS + Relative)',
-    'Filter 1 + 2 + 1',
-    'Filter 1 + 2'
+    # 'Filter 1 + 2 + 1',
+    # 'Filter 1 + 2'
     # 'Filter 1 (Outage and mild wind)',
     # 'Filter 1 (Outage and strong wind)',
     # 'Filter 1 + 2 (Outage and mild wind)',
@@ -46,12 +46,12 @@ group_labels = [
 
 models = [
     'modelA',
-    # 'modelC'
+    'modelC'
     ]
 
 model_labels = [
     'Model A',
-    # 'Model B'
+    'Model B'
     ]
 
 # Group labels for columns
