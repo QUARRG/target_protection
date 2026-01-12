@@ -67,8 +67,8 @@ class CircleDistortion(Node):
         self.declare_parameter('seed', 42)
 
         # Time parameters for communication outage simulation
-        self.declare_parameter('outage_start_time', 20.0)  # Start communication outage at 20s
-        self.declare_parameter('outage_duration', 50.0)    # Outage lasts 20s (until 40s)
+        self.declare_parameter('outage_start_time', 60.0)  # Start communication outage at 20s
+        self.declare_parameter('outage_duration', 60.0)    # Outage lasts 20s (until 40s)
 
         # Get filter parameters
         self.P_ego_list = self.get_parameter('P_ego').value
@@ -393,23 +393,23 @@ class CircleDistortion(Node):
         phase_ego, current_position, desired_position = self.filter_gps.update(y_ego_gps)
         
         # Get current ego position from GPS filter
-        # qi = np.asarray([current_position.pose.pose.position.x,
-        #                  current_position.pose.pose.position.y,
-        #                  current_position.pose.pose.position.z]).reshape((3, 1))
-        # Rei = build_Re(self.filter_gps.embedding_fn, self.phases[1])
-        # Rci = self.filter_gps.Rc
+        qi = np.asarray([current_position.pose.pose.position.x,
+                         current_position.pose.pose.position.y,
+                         current_position.pose.pose.position.z]).reshape((3, 1))
+        Rei = build_Re(self.filter_gps.embedding_fn, self.phases[1])
+        Rci = self.filter_gps.Rc
 
-        # # Update relative filter for leader
-        # rel_noise = np.random.multivariate_normal(np.zeros(3), np.diag(np.square(self.V_rel_list))).reshape((3, 1))
-        # y_leader = (Rci.T @ Rei.T @ y_rel_leader) + rel_noise
-        # phase_leader = self.filter_relative_leader.update(y_leader, Rei, Rci, qi)
-        # self.phases[0] = phase_leader.data
+        # Update relative filter for leader
+        rel_noise = np.random.multivariate_normal(np.zeros(3), np.diag(np.square(self.V_rel_list))).reshape((3, 1))
+        y_leader = (Rci.T @ Rei.T @ y_rel_leader) + rel_noise
+        phase_leader = self.filter_relative_leader.update(y_leader, Rei, Rci, qi)
+        self.phases[0] = phase_leader.data
 
-        # # Update relative filter for follower
-        # rel_noise = np.random.multivariate_normal(np.zeros(3), np.diag(np.square(self.V_rel_list))).reshape((3, 1))
-        # y_follower = (Rci.T @ Rei.T @ y_rel_follower) + rel_noise
-        # phase_follower = self.filter_relative_follower.update(y_follower, Rei, Rci, qi)
-        # self.phases[2] = phase_follower.data
+        # Update relative filter for follower
+        rel_noise = np.random.multivariate_normal(np.zeros(3), np.diag(np.square(self.V_rel_list))).reshape((3, 1))
+        y_follower = (Rci.T @ Rei.T @ y_rel_follower) + rel_noise
+        phase_follower = self.filter_relative_follower.update(y_follower, Rei, Rci, qi)
+        self.phases[2] = phase_follower.data
 
     def _sync_relative_filters(self):
         """
