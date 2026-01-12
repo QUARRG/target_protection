@@ -7,7 +7,10 @@ from tqdm import tqdm
 
 
 # Define the root directory containing the bag files
-rootdir = os.path.join('/home/paulo/Documents/DATA_NEW_2/')
+rootdir = os.path.join('/home/paulo/Documents/k_03/')
+
+# Flag to force extraction even if extracted files already exist
+force_extraction = True
 
 # Find all .db3 files in the rootdir
 bag_files = []
@@ -76,6 +79,12 @@ typestore = get_typestore(Stores.ROS2_HUMBLE)
 pbar = tqdm(bag_files, desc="Processing bag files")
 for bag_file in bag_files:
     output_csv_file = bag_file.replace('.db3', '_extracted.csv')
+    
+    # Check if extracted file already exists
+    if Path(output_csv_file).exists() and not force_extraction:
+        print(f"Skipping {bag_file}: extracted file already exists. Use force_extraction=True to override.")
+        pbar.update(1)
+        continue
 
     # Extract data from bag file to a master CSV file
     with AnyReader([Path(bag_file)], default_typestore=typestore) as reader:

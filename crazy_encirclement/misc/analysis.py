@@ -10,18 +10,51 @@ from tabulate import tabulate
 
 warnings.filterwarnings('ignore')
 
-plt.rcParams.update({'text.usetex': True, 'font.size': 20, 'figure.dpi': 150})
+plt.rcParams.update({'text.usetex': True, 'font.size': 24, 'figure.dpi': 150})
 
 # helpers
 from crazy_encirclement.filters import wrap_to_pi
 
 # Configuration
-base_dir = Path('/home/paulo/Documents/k_10/')
+base_dir = Path('/home/paulo/Documents/k_03/')
 plots_dir = base_dir / 'plots'
 plots_dir.mkdir(exist_ok=True)
-groups = ['baseline', 'gps', 'relative']
-models = ['modelA', 'modelC']
-model_labels = ['Model A', 'Model B']
+
+groups_list = [
+    # 'baseline',
+    'gps',
+    'relative',
+    # 'combined',
+    # 'total_outage_wind_mild',
+    # 'total_outage_wind_strong',
+    # 'combined_wind_mild',
+    # 'combined_wind_strong'
+    ]
+
+group_labels = [
+    # 'Baseline',
+    'Filter 1',
+    'Filter 2',
+    # 'Filter 1 + 2 (GPS + Relative)',
+    # 'Filter 1 + 2 + 1',
+    # 'Filter 1 + 2'
+    # 'Filter 1 (Outage and mild wind)',
+    # 'Filter 1 (Outage and strong wind)',
+    # 'Filter 1 + 2 (Outage and mild wind)',
+    # 'Filter 1 + 2 (Outage and strong wind)',
+    ]
+
+models = [
+    'modelA',
+    'modelC'
+    ]
+
+model_labels = [
+    'Model A',
+    'Model B'
+    ]
+
+# Group labels for columns
 speeds = ['0_2']
 drones = ['C14', 'C05', 'C04']
 colormap_name = 'gist_rainbow'  # Can be changed to: 'plasma', 'inferno', 'magma', 'cividis', 'tab10', etc.
@@ -218,17 +251,14 @@ def plot_phases_differences_errors_experiments():
     Shows ±5 deg confidence bounds and computes settling time.
     """
     n_models = len(models)
-    n_groups = 3  # baseline, gps, relative
-    fig, axes = plt.subplots(n_models, n_groups, figsize=(18, 8), sharex=True, sharey=True)
+    n_groups = len(groups_list)
+    x_size = 6 * n_groups
+    y_size = 5 * n_models
+    fig, axes = plt.subplots(n_models, n_groups, figsize=(x_size, y_size), sharex=True, sharey=True)
     
     # Nominal phase difference (120 degrees = 2π/3 radians)
     nominal_phase_diff_deg = 120.0  # degrees
-    confidence_bound = 5.0  # ±5 degrees
-    
-    # Group labels for columns
-    group_labels = ['Baseline', 'Filter 1 (GPS)', 'Filter 2 (Relative)']
-    groups_list = ['baseline', 'gps', 'relative']
-    
+    confidence_bound = 5.0  # ±5 degrees    
     speed = speeds[0]  # Using only one speed for now
     
     for i_model, model in enumerate(models):
@@ -337,7 +367,7 @@ def plot_phases_differences_errors_experiments():
                 # Row labels (model names)
                 if j_group == 0:
                     model_label = model_labels[i_model]
-                    ax.set_ylabel(f'{model_label}\n\nError (deg)', fontweight='bold')
+                    ax.set_ylabel(f'{model_label}\n\n$\epsilon_{{\phi^l}}$ (deg)', fontweight='bold')
                 
                 # Bottom labels
                 if i_model == n_models - 1:
@@ -361,139 +391,6 @@ def plot_phases_differences_errors_experiments():
     plt.close()
 
 
-def compute_phase_diff_settling_summary():
-    """
-    Compute and print settling time summary table for phase difference errors.
-    """
-    confidence_bound = 5.0  # ±5 degrees
-    nominal_phase_diff_deg = 120.0    
-    speed = speeds[0]
-    
-    # Store data for all models/groups/drones
-    settling_summary = {model: {group: {drone: {'enter': None, 'stabilize': None, 'percent': None} 
-                                       for drone in drones} 
-                               for group in groups} 
-                       for model in models}
-    
-    for model in models:
-        for group in groups:            
-            csv_files = find_csv_files(group, model, speed)
-            csv_files = [f for f in csv_files if 'processed' in f.name]
-            
-            if len(csv_files) == 0:
-                print("  No processed CSV files found")
-                continue
-            
-            for drone in drones:
-                phase_diff_errors_all = []
-                time_references = []
-                
-                for csv_file in csv_files:
-                    df = load_and_crop_csv(csv_file)
-                    
-                    if df is None or len(df) == 0:
-                        continue
-                    
-                    # Get time column
-                    timestamp_cols = [col for col in df.columns if 'time' in col.lower() or 'stamp' in col.lower()]
-                    time_col = timestamp_cols[0] if len(timestamp_cols) > 0 else None
-                    if time_col is None:
-                        continue
-                    
-                    # Get measured phases
-                    follower, leader = DRONE_RELATIONSHIPS[drone]
-                    ego_meas_col = f"_{drone}_measured_phase"
-                    leader_meas_col = f"_{leader}_measured_phase"
-                    
-                    if not (ego_meas_col in df.columns and leader_meas_col in df.columns):
-                        continue
-                    
-                    # Extract and align phase data
-                    phase_leader_data = df[[time_col, leader_meas_col]].dropna().values
-                    phase_ego_data = df[[time_col, ego_meas_col]].dropna().values
-                    
-                    lengths = [len(phase_leader_data), len(phase_ego_data)]
-                    min_length = min(lengths) if lengths else 0
-                    if min_length == 0:
-                        continue
-                    
-                    phase_leader_data = phase_leader_data[:min_length, :]
-                    phase_ego_data = phase_ego_data[:min_length, :]
-                    
-                    time_ref = phase_ego_data[:, 0]
-                    phase_leader = phase_leader_data[:, 1]
-                    phase_ego = phase_ego_data[:, 1]
-                    
-                    # Compute phase difference error
-                    phase_diff_leader = wrap_to_pi(phase_leader - phase_ego)
-                    phase_diff_deg = np.rad2deg(phase_diff_leader)
-                    error_phase_diff = phase_diff_deg - nominal_phase_diff_deg
-                    
-                    phase_diff_errors_all.append(error_phase_diff)
-                    time_references.append(time_ref)
-                
-                # Compute aggregate statistics
-                if len(phase_diff_errors_all) > 0:
-                    longest_idx = np.argmax([len(t) for t in time_references])
-                    time_common = time_references[longest_idx]
-                    
-                    errors_interp = [np.interp(time_common, t, e, left=np.nan, right=np.nan) 
-                                    for t, e in zip(time_references, phase_diff_errors_all)]
-                    stacked = np.array(errors_interp)
-                    mean_err = np.nanmean(stacked, axis=0)
-                    
-                    # Compute settling time
-                    time_to_enter, time_to_stabilize, percent_in_bounds = compute_settling_time_and_bounds(
-                        time_common, mean_err, lower_bound=-confidence_bound, upper_bound=confidence_bound
-                    )
-                    
-                    settling_summary[model][group][drone] = {
-                        'enter': time_to_enter,
-                        'stabilize': time_to_stabilize,
-                        'percent': percent_in_bounds
-                    }
-    
-    # Print comprehensive summary tables
-    print("\n" + "=" * 140)
-    print("SUMMARY TABLE - Phase Difference Settling Times")
-    print("=" * 140)
-    
-    for group in groups:
-        print(f"\n{group.upper()}:")
-        
-        # Combined comprehensive table for this group
-        table_data_combined = []
-        for drone in drones:
-            enter_a = settling_summary['modelA'][group][drone]['enter']
-            stabilize_a = settling_summary['modelA'][group][drone]['stabilize']
-            percent_a = settling_summary['modelA'][group][drone]['percent']
-            
-            enter_c = settling_summary['modelC'][group][drone]['enter']
-            stabilize_c = settling_summary['modelC'][group][drone]['stabilize']
-            percent_c = settling_summary['modelC'][group][drone]['percent']
-            
-            enter_a_str = f"{enter_a:.2f}" if enter_a is not None else "N/A"
-            stabilize_a_str = f"{stabilize_a:.2f}" if stabilize_a is not None else "N/A"
-            percent_a_str = f"{percent_a:.1f}%" if percent_a is not None else "N/A"
-            
-            enter_c_str = f"{enter_c:.2f}" if enter_c is not None else "N/A"
-            stabilize_c_str = f"{stabilize_c:.2f}" if stabilize_c is not None else "N/A"
-            percent_c_str = f"{percent_c:.1f}%" if percent_c is not None else "N/A"
-            
-            table_data_combined.append([
-                labels[drone],
-                enter_a_str, stabilize_a_str, percent_a_str,
-                enter_c_str, stabilize_c_str, percent_c_str
-            ])
-        
-        headers = [
-            'Drone',
-            'ModelA\nEnter (s)', 'ModelA\nStabilize (s)', 'ModelA\nIn Bounds (%)',
-            'ModelC\nEnter (s)', 'ModelC\nStabilize (s)', 'ModelC\nIn Bounds (%)'
-        ]
-        print(tabulate(table_data_combined, headers=headers, tablefmt='grid', stralign='center'))
-
-
 def plot_omega_errors_experiments():
     """
     Create a 2x3 montage showing omega errors.
@@ -501,12 +398,10 @@ def plot_omega_errors_experiments():
     Columns: groups (baseline, gps/Filter1, relative/Filter2)
     """
     n_models = len(models)
-    n_groups = 3  # baseline, gps, relative
-    fig, axes = plt.subplots(n_models, n_groups, figsize=(18, 8), sharex=True, sharey=True)
-    
-    # Group labels for columns
-    group_labels = ['Baseline', 'Filter 1 (GPS)', 'Filter 2 (Relative)']
-    groups_list = ['baseline', 'gps', 'relative']
+    n_groups = len(groups_list)
+    x_size = 6 * n_groups
+    y_size = 5 * n_models
+    fig, axes = plt.subplots(n_models, n_groups, figsize=(x_size, y_size), sharex=True, sharey=True)
     
     # Nominal omega values
     nominal_omegas = {
@@ -606,7 +501,7 @@ def plot_omega_errors_experiments():
                 # Row labels (model names)
                 if j_group == 0:
                     model_label = model_labels[i_model]
-                    ax.set_ylabel(f'{model_label}\n\nError (rad/s)', fontweight='bold')
+                    ax.set_ylabel(f'{model_label}\n\n$\epsilon_{{\omega_z}}$ (rad/s)', fontweight='bold')
                 
                 # Bottom labels
                 if i_model == n_models - 1:
@@ -645,11 +540,11 @@ def compute_itae_summary():
     nominal_omega = nominal_omegas[speed]
     
     # Create a summary dictionary
-    itae_summary = {model: {group: {drone: [] for drone in drones} for group in groups} 
+    itae_summary = {model: {group: {drone: [] for drone in drones} for group in groups_list} 
                     for model in models}
     
     for model in models:
-        for group in groups:           
+        for group in groups_list:           
             csv_files = find_csv_files(group, model, speed)
             
             if len(csv_files) == 0:
@@ -711,28 +606,179 @@ def compute_itae_summary():
     print("SUMMARY TABLE - ITAE Values (Time-Weighted Absolute Error)")
     print("=" * 140)
     
-    for group in groups:
+    for group in groups_list:
         print(f"\n{group.upper()}:")
         
         table_data = []
         for drone in drones:
-            itae_a = itae_summary['modelA'][group].get(drone, 0)
-            itae_c = itae_summary['modelC'][group].get(drone, 0)
-            
-            if itae_a > 0:
-                ratio = itae_c / itae_a
-            else:
-                ratio = 0
-            
-            table_data.append([
-                labels[drone],
-                f"{itae_a:.4f}",
-                f"{itae_c:.4f}",
-                f"{ratio:.2f}x"
-            ])
+            row = [labels[drone]]
+            for model in models:
+                itae = itae_summary[model][group].get(drone, 0)
+                row.append(f"{itae:.4f}")
+            table_data.append(row)
         
-        print(tabulate(table_data, headers=['Drone', 'ModelA', 'ModelC', 'Ratio (C/A)'], 
-                      tablefmt='grid', stralign='center'))
+        # Add mean row
+        mean_row = ['MEAN']
+        for model in models:
+            itae_values = [itae_summary[model][group].get(drone, 0) for drone in drones]
+            mean_itae = np.mean(itae_values)
+            mean_row.append(f"{mean_itae:.4f}")
+        table_data.append(mean_row)
+        
+        headers = [
+            'Drone',
+        ]
+        for model in models:
+            model_label = model_labels[models.index(model)]
+            headers.extend([
+                f'{model_label}'
+            ])
+        print(tabulate(table_data, headers=headers, 
+                        tablefmt='grid', stralign='center'))
+
+
+def compute_phase_diff_settling_summary():
+    """
+    Compute and print settling time summary table for phase difference errors.
+    """
+    confidence_bound = 5.0  # ±5 degrees
+    nominal_phase_diff_deg = 120.0    
+    speed = speeds[0]
+    
+    # Store data for all models/groups/drones
+    settling_summary = {model: {group: {drone: {'enter': None, 'stabilize': None, 'percent': None} 
+                                       for drone in drones} 
+                               for group in groups_list} 
+                       for model in models}
+    
+    for model in models:
+        for group in groups_list:            
+            csv_files = find_csv_files(group, model, speed)
+            csv_files = [f for f in csv_files if 'processed' in f.name]
+            
+            if len(csv_files) == 0:
+                print("  No processed CSV files found")
+                continue
+            
+            for drone in drones:
+                phase_diff_errors_all = []
+                time_references = []
+                
+                for csv_file in csv_files:
+                    df = load_and_crop_csv(csv_file)
+                    
+                    if df is None or len(df) == 0:
+                        continue
+                    
+                    # Get time column
+                    timestamp_cols = [col for col in df.columns if 'time' in col.lower() or 'stamp' in col.lower()]
+                    time_col = timestamp_cols[0] if len(timestamp_cols) > 0 else None
+                    if time_col is None:
+                        continue
+                    
+                    # Get measured phases
+                    follower, leader = DRONE_RELATIONSHIPS[drone]
+                    ego_meas_col = f"_{drone}_measured_phase"
+                    leader_meas_col = f"_{leader}_measured_phase"
+                    
+                    if not (ego_meas_col in df.columns and leader_meas_col in df.columns):
+                        continue
+                    
+                    # Extract and align phase data
+                    phase_leader_data = df[[time_col, leader_meas_col]].dropna().values
+                    phase_ego_data = df[[time_col, ego_meas_col]].dropna().values
+                    
+                    lengths = [len(phase_leader_data), len(phase_ego_data)]
+                    min_length = min(lengths) if lengths else 0
+                    if min_length == 0:
+                        continue
+                    
+                    phase_leader_data = phase_leader_data[:min_length, :]
+                    phase_ego_data = phase_ego_data[:min_length, :]
+                    
+                    time_ref = phase_ego_data[:, 0]
+                    phase_leader = phase_leader_data[:, 1]
+                    phase_ego = phase_ego_data[:, 1]
+                    
+                    # Compute phase difference error
+                    phase_diff_leader = wrap_to_pi(phase_leader - phase_ego)
+                    phase_diff_deg = np.rad2deg(phase_diff_leader)
+                    error_phase_diff = phase_diff_deg - nominal_phase_diff_deg
+                    
+                    phase_diff_errors_all.append(error_phase_diff)
+                    time_references.append(time_ref)
+                
+                # Compute aggregate statistics
+                if len(phase_diff_errors_all) > 0:
+                    longest_idx = np.argmax([len(t) for t in time_references])
+                    time_common = time_references[longest_idx]
+                    
+                    errors_interp = [np.interp(time_common, t, e, left=np.nan, right=np.nan) 
+                                    for t, e in zip(time_references, phase_diff_errors_all)]
+                    stacked = np.array(errors_interp)
+                    mean_err = np.nanmean(stacked, axis=0)
+                    
+                    # Compute settling time
+                    time_to_enter, time_to_stabilize, percent_in_bounds = compute_settling_time_and_bounds(
+                        time_common, mean_err, lower_bound=-confidence_bound, upper_bound=confidence_bound
+                    )
+                    
+                    settling_summary[model][group][drone] = {
+                        'enter': time_to_enter,
+                        'stabilize': time_to_stabilize,
+                        'percent': percent_in_bounds
+                    }
+    
+    # Print comprehensive summary tables
+    print("\n" + "=" * 140)
+    print("SUMMARY TABLE - Phase Difference Settling Times")
+    print("=" * 140)
+    
+    for group in groups_list:
+        print(f"\n{group.upper()}:")
+        
+        # Combined comprehensive table for this group
+        table_data_combined = []
+        for drone in drones:
+            row = [labels[drone]]
+            for model in models:
+                enter = settling_summary[model][group][drone]['enter']
+                stabilize = settling_summary[model][group][drone]['stabilize']
+                percent = settling_summary[model][group][drone]['percent']
+                
+                enter_str = f"{enter:.2f}" if enter is not None else "N/A"
+                stabilize_str = f"{stabilize:.2f}" if stabilize is not None else "N/A"
+                percent_str = f"{percent:.1f}%" if percent is not None else "N/A"
+
+                row.extend([enter_str, stabilize_str, percent_str])
+            table_data_combined.append(row)
+        
+        # Add mean row
+        mean_row = ['MEAN']
+        for model in models:
+            enter_values = [settling_summary[model][group][drone]['enter'] for drone in drones 
+                           if settling_summary[model][group][drone]['enter'] is not None]
+            stabilize_values = [settling_summary[model][group][drone]['stabilize'] for drone in drones 
+                               if settling_summary[model][group][drone]['stabilize'] is not None]
+            percent_values = [settling_summary[model][group][drone]['percent'] for drone in drones 
+                             if settling_summary[model][group][drone]['percent'] is not None]
+            
+            mean_enter = f"{np.mean(enter_values):.2f}" if enter_values else "N/A"
+            mean_stabilize = f"{np.mean(stabilize_values):.2f}" if stabilize_values else "N/A"
+            mean_percent = f"{np.mean(percent_values):.1f}%" if percent_values else "N/A"
+            
+            mean_row.extend([mean_enter, mean_stabilize, mean_percent])
+        table_data_combined.append(mean_row)
+
+        headers = [
+            'Drone',
+        ]
+        for model in models:
+            model_label = model_labels[models.index(model)]
+            headers.extend([
+                f'{model_label}\nEnter (s)', f'{model_label}\nStabilize (s)', f'{model_label}\nIn Bounds (%)'
+            ])
+        print(tabulate(table_data_combined, headers=headers, tablefmt='grid', stralign='center'))
 
 
 def compute_phase_diff_variance_snapshots():
@@ -747,11 +793,11 @@ def compute_phase_diff_variance_snapshots():
     # Store variance data: {model: {group: {drone: {t: {'mean': ..., 'std': ...}}}}}
     variance_summary = {model: {group: {drone: {t: {'mean': None, 'std': None} for t in time_snapshots} 
                                        for drone in drones} 
-                               for group in groups} 
+                               for group in groups_list} 
                        for model in models}
     
     for model in models:
-        for group in groups:
+        for group in groups_list:
             for drone in drones:
                 csv_files = find_csv_files(group, model, speed)
                 csv_files = [f for f in csv_files if 'processed' in f.name]
@@ -832,42 +878,214 @@ def compute_phase_diff_variance_snapshots():
     print("\n" + "=" * 140)
     print("SUMMARY TABLE - Phase Difference Error Variance (Standard Deviation)")
     print("=" * 140)
+
+    # Format as "mean ± std" for each snapshot
+    def fmt_error_std(data_dict):
+        if data_dict is None or data_dict['mean'] is None:
+            return "N/A"
+        return f"{data_dict['mean']:+.2f}°±{data_dict['std']:.2f}°"
     
-    for group in groups:
+    for group in groups_list:
         print(f"\n{group.upper()}:")
         
         table_data = []
-        for drone in drones:
-            std_20_a = variance_summary['modelA'][group][drone][20.0]
-            std_40_a = variance_summary['modelA'][group][drone][40.0]
-            std_60_a = variance_summary['modelA'][group][drone][60.0]
-            
-            std_20_c = variance_summary['modelC'][group][drone][20.0]
-            std_40_c = variance_summary['modelC'][group][drone][40.0]
-            std_60_c = variance_summary['modelC'][group][drone][60.0]
-            
-            # Format as "mean ± std" for each snapshot
-            def fmt_error_std(data_dict):
-                if data_dict is None or data_dict['mean'] is None:
-                    return "N/A"
-                return f"{data_dict['mean']:+.2f}°±{data_dict['std']:.2f}°"
-            
-            table_data.append([
-                labels[drone],
-                fmt_error_std(std_20_a),
-                fmt_error_std(std_40_a),
-                fmt_error_std(std_60_a),
-                fmt_error_std(std_20_c),
-                fmt_error_std(std_40_c),
-                fmt_error_std(std_60_c)
-            ])
         
+        for drone in drones:
+            row = [labels[drone]]
+            for model in models:
+                std_20 = variance_summary[model][group][drone][20.0]
+                std_40 = variance_summary[model][group][drone][40.0]
+                std_60 = variance_summary[model][group][drone][60.0]
+                
+                row.append(fmt_error_std(std_20))
+                row.append(fmt_error_std(std_40))
+                row.append(fmt_error_std(std_60))
+
+            table_data.append(row)
+                
         headers = [
             'Drone',
-            'ModelA\n20s', 'ModelA\n40s', 'ModelA\n60s',
-            'ModelC\n20s', 'ModelC\n40s', 'ModelC\n60s'
         ]
+        for model in models:
+            model_label = model_labels[models.index(model)]
+            headers.extend([
+                f'{model_label}\n20s', f'{model_label}\n40s', f'{model_label}\n60s'
+            ])
         print(tabulate(table_data, headers=headers, tablefmt='grid', stralign='center'))
+    
+    return variance_summary
+
+
+def plot_phase_diff_boxplot_end_of_flight():
+    """
+    Create boxplot showing phase difference errors at end of flight (t=60s).
+    Group boxes by model (Model A in blue, Model C in red).
+    X-axis shows methods (baseline, gps, relative).
+    """
+    # Extract data for end of flight (t=60s)
+    t_end = 60.0
+    speed = speeds[0]
+    
+    # Collect all errors at end of flight
+    # Structure: {model: {group: [list of all drone errors]}}
+    data_for_boxplot = {model: {group: [] for group in groups_list} for model in models}
+    
+    # Actually, we need to restructure to get individual seed values
+    # Let's recompute with full data preservation
+    nominal_phase_diff_deg = 120.0
+    
+    data_for_boxplot = {model: {group: [] for group in groups_list} for model in models}
+    
+    for model in models:
+        for group in groups_list:
+            for drone in drones:
+                csv_files = find_csv_files(group, model, speed)
+                csv_files = [f for f in csv_files if 'processed' in f.name]
+                
+                if len(csv_files) == 0:
+                    continue
+                
+                # Get relationship
+                follower, leader = DRONE_RELATIONSHIPS[drone]
+                
+                phase_diff_errors_at_end = []
+                
+                for csv_file in csv_files:
+                    df = load_and_crop_csv(csv_file)
+                    
+                    if df is None or len(df) == 0:
+                        continue
+                    
+                    # Get time column
+                    timestamp_cols = [col for col in df.columns if 'time' in col.lower() or 'stamp' in col.lower()]
+                    time_col = timestamp_cols[0] if len(timestamp_cols) > 0 else None
+                    if time_col is None:
+                        continue
+                    
+                    # Get measured phases
+                    ego_meas_col = f"_{drone}_measured_phase"
+                    leader_meas_col = f"_{leader}_measured_phase"
+                    
+                    if not (ego_meas_col in df.columns and leader_meas_col in df.columns):
+                        continue
+                    
+                    # Extract and align phase data
+                    phase_leader_data = df[[time_col, leader_meas_col]].dropna().values
+                    phase_ego_data = df[[time_col, ego_meas_col]].dropna().values
+                    
+                    lengths = [len(phase_leader_data), len(phase_ego_data)]
+                    min_length = min(lengths) if lengths else 0
+                    if min_length == 0:
+                        continue
+                    
+                    phase_leader_data = phase_leader_data[:min_length, :]
+                    phase_ego_data = phase_ego_data[:min_length, :]
+                    
+                    time_ref = phase_ego_data[:, 0]
+                    phase_leader = phase_leader_data[:, 1]
+                    phase_ego = phase_ego_data[:, 1]
+                    
+                    # Compute phase difference error
+                    phase_diff_leader = wrap_to_pi(phase_leader - phase_ego)
+                    phase_diff_deg = np.rad2deg(phase_diff_leader)
+                    error_phase_diff = phase_diff_deg - nominal_phase_diff_deg
+                    
+                    # Find error at end of flight (t=60s)
+                    idx_end = np.argmin(np.abs(time_ref - t_end))
+                    if not np.isnan(error_phase_diff[idx_end]):
+                        phase_diff_errors_at_end.append(error_phase_diff[idx_end])
+                
+                if len(phase_diff_errors_at_end) > 0:
+                    data_for_boxplot[model][group].extend(phase_diff_errors_at_end)
+    
+    # Create boxplot
+    n_models = len(models)
+    x_size = max(4 * n_models, 6)
+    y_size = 6
+
+    fig, ax = plt.subplots(figsize=(x_size, y_size))
+    
+    # Prepare data for boxplot
+    box_width = 0.35
+    group_spacing = 1.2
+    
+    # Model colors
+    model_colors = {
+        'modelA': 'C0',  # Blue
+        'modelC': 'C3'   # Red
+    }
+    
+    for group_idx, group in enumerate(groups_list):
+        group_x = group_idx * group_spacing
+        
+        for model_idx, model in enumerate(models):
+            x = group_x + (model_idx - 0.5) * box_width
+            
+            if len(data_for_boxplot[model][group]) > 0:
+                bp = ax.boxplot(
+                    [data_for_boxplot[model][group]],
+                    positions=[x],
+                    widths=box_width,
+                    patch_artist=True,
+                    showfliers=True,
+                    whiskerprops=dict(color='black', linewidth=1.5),
+                    capprops=dict(color='black', linewidth=1.5),
+                    medianprops=dict(color='darkred', linewidth=2),
+                    boxprops=dict(facecolor=model_colors[model], alpha=0.7, linewidth=1.5),
+                    flierprops=dict(marker='o', markerfacecolor=model_colors[model], markersize=5, alpha=0.5)
+                )
+    
+    # Set x-axis labels
+    ax.set_xticks([i * group_spacing for i in range(len(groups_list))])
+    ax.set_xticklabels(group_labels, fontweight='bold')
+    
+    # Set labels and title
+    ax.set_ylabel('$\epsilon_{\phi^l}$ (deg)', fontweight='bold')
+    # ax.set_xlabel('Control Method', fontsize=14, fontweight='bold')
+    # ax.set_title('Phase Difference Error at End of Flight (t=60s)', fontsize=16, fontweight='bold')
+    
+    # Add horizontal grid
+    ax.grid(True, axis='y', alpha=0.3, linestyle='--')
+    ax.set_axisbelow(True)
+    
+    # Add legend
+    from matplotlib.patches import Patch
+    legend_elements = [
+        Patch(facecolor='C0', alpha=0.7, label='Model A'),
+        Patch(facecolor='C3', alpha=0.7, label='Model C')
+    ]
+    ax.legend(handles=legend_elements, fontsize=12, loc='upper left')
+    
+    # Add horizontal line at y=0
+    ax.axhline(y=0, color='gray', linestyle='--', linewidth=1, alpha=0.5)
+    
+    plt.tight_layout()
+    plot_path = plots_dir / 'phase_diff_boxplot_end_of_flight.png'
+    plt.savefig(plot_path, dpi=150, bbox_inches='tight')
+    print(f"\nBoxplot saved to: {plot_path}")
+    plt.close()
+    
+    # Print IQR summary table
+    print("\n" + "=" * 100)
+    print("SUMMARY TABLE - IQR (Interquartile Range) at End of Flight (t=60s)")
+    print("=" * 100)
+    
+    table_data = []
+    for group in groups_list:
+        row = [group_labels[groups_list.index(group)]]
+        for model in models:
+            if len(data_for_boxplot[model][group]) > 0:
+                data = np.array(data_for_boxplot[model][group])
+                q1 = np.percentile(data, 25)
+                q3 = np.percentile(data, 75)
+                iqr = q3 - q1
+                row.append(f"{iqr:.2f}°")
+            else:
+                row.append("N/A")
+        table_data.append(row)
+    
+    headers = ['Method'] + [model_labels[models.index(model)] for model in models]
+    print(tabulate(table_data, headers=headers, tablefmt='grid', stralign='center'))
 
 
 if __name__ == "__main__":
@@ -881,7 +1099,8 @@ if __name__ == "__main__":
     print("=" * 140)
     plot_omega_errors_experiments()
     
-    # Summary of metrics
+    # # Summary of metrics
     compute_itae_summary()
     compute_phase_diff_settling_summary()
     compute_phase_diff_variance_snapshots()
+    plot_phase_diff_boxplot_end_of_flight()
