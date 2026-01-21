@@ -23,8 +23,6 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'encirclement = crazy_encirclement.encirclement_node:main',
-            'crazy_circle = crazy_encirclement.crazy_circle:main',
             'agents_order = crazy_encirclement.agents_order:main',
             'circle_distortion_filter_gps = crazy_encirclement.circle_distortion_filter_gps:main',
             'circle_distortion_baseline = crazy_encirclement.circle_distortion_baseline:main',
@@ -32,6 +30,7 @@ setup(
             'circle_distortion_filters_combined = crazy_encirclement.circle_distortion_filters_combined:main',
             'gps = crazy_encirclement.gps:main',
             'gps_scanner = crazy_encirclement.gps_scanner:main',
+            'motion_capture_tracking_relative = crazy_encirclement.motion_capture_tracking_relative:main',
         ],
     },
 )
