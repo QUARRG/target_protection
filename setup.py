@@ -31,6 +31,7 @@ setup(
             'gps = crazy_encirclement.gps:main',
             'gps_scanner = crazy_encirclement.gps_scanner:main',
             'motion_capture_tracking_relative = crazy_encirclement.motion_capture_tracking_relative:main',
+            'follow_limo = crazy_encirclement.follow_limo:main'
         ],
     },
 )
