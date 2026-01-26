@@ -22,7 +22,8 @@ class MOCAP_relative(Node):
         self.V_rel = self.get_parameter('V_rel').get_parameter_value().double_array_value
         self.update_hz = 110
         self.reference = self.get_parameter('reference_object').get_parameter_value().string_value
-        self.rot = R.from_quat([0, 0, 0, 1])
+        self.R_wc = R.from_quat([0, 0, 0, 1])
+        self.R_cw = R.from_quat([0, 0, 0, 1])
         
         qos_profile = QoSProfile(reliability =QoSReliabilityPolicy.BEST_EFFORT,
             history=QoSHistoryPolicy.KEEP_LAST,
@@ -57,17 +58,9 @@ class MOCAP_relative(Node):
                 qy = pose.pose.orientation.y
                 qz = pose.pose.orientation.z
                 qw = pose.pose.orientation.w
-                self.rot = R.from_quat([qx, qy, qz, qw])
-                self.rot = self.rot.inv()
+                self.R_wc = R.from_quat([qx, qy, qz, qw])
+                self.R_cw = self.R_wc.inv()
 
-
-                # ego_pose = NamedPose()
-                # gps_noise = np.random.multivariate_normal(np.zeros(3), np.diag(np.square(self.V_ego)))
-                # ego_pose.name = pose.name
-                # ego_pose.pose.position.x = pose.pose.position.x 
-                # ego_pose.pose.position.y = pose.pose.position.y 
-                # ego_pose.pose.position.z = pose.pose.position.z 
-                # self.scanner.poses.append(ego_pose)
 
         # Getting relative poses of other robots with respect to ego
         for pose in msg.poses:
@@ -75,11 +68,18 @@ class MOCAP_relative(Node):
                 relative_pose = NamedPose()
                 relative_pose.name = pose.name
                 aux_pose = np.array([pose.pose.position.x - self.ref_pose.pose.position.x,pose.pose.position.y - self.ref_pose.pose.position.y,pose.pose.position.z - self.ref_pose.pose.position.z])
-                aux_pose = self.rot.apply(aux_pose)
+                aux_pose = self.R_cw.apply(aux_pose)
                 relative_pose.pose.position.x = aux_pose[0]
                 relative_pose.pose.position.y = aux_pose[1]
                 relative_pose.pose.position.z = aux_pose[2]
-
+                #orientation
+                R_wd = R.from_quat([pose.pose.orientation.x,pose.pose.orientation.y,pose.pose.orientation.z,pose.pose.orientation.w])
+                R_cd = self.R_cw*R_wd
+                qx, qy, qz, qw = R_cd.as_quat()
+                relative_pose.pose.orientation.x = qx
+                relative_pose.pose.orientation.y = qy
+                relative_pose.pose.orientation.z = qz
+                relative_pose.pose.orientation.w = qw
                 self.scanner.poses.append(relative_pose)
         
         # Publish the Vicon position without noise
