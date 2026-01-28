@@ -12,28 +12,30 @@ from crazy_encirclement_interfaces.msg import Metadata
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy, QoSPresetProfiles
 from motion_capture_tracking_interfaces.msg import NamedPoseArray
 from rclpy.duration import Duration
+from crazyflie_py import Crazyswarm
 
 class Follow_Limo(Node):
-    def __init__(self):
+    def __init__(self,swarm=None):
         """
             Node that sends the crazyflie to a desired position
             The desired position comes from the distortion of a circle
         """
         super().__init__('circle_distortion')
+        self.swarm = swarm
         self.info = self.get_logger().info
         self.info('Circle distortion node has been started.')
 
         # Parameters
         self.declare_parameter('robot', 'C20')
         self.declare_parameter('hover_height', 0.5)
+        self.declare_parameter('relative',False)
 
         self.robot    = str(self.get_parameter('robot').value)
         self.hover_height = float(self.get_parameter('hover_height').value)
-
-
+        self.relative = bool(self.get_parameter('relative').value)
         # Filter parameters
 
-        self.hz = 10
+        self.hz = 30
 
         # Reboot client
         self.reboot_client = self.create_client(Empty, self.robot + '/reboot')
@@ -74,15 +76,24 @@ class Follow_Limo(Node):
             self._encircle_callback,
             10)
         
-        qos_profile = QoSProfile(reliability =QoSReliabilityPolicy.BEST_EFFORT,
-            history=QoSHistoryPolicy.KEEP_LAST,
-            depth=10,
-            deadline=Duration(seconds=0, nanoseconds=0))
+        poses_qos_deadline = 100.0  # example Hz
 
-        self.create_subscription(
-            NamedPoseArray, "poses_relative",
-            self._poses_changed, qos_profile
+        qos_profile = QoSProfile(
+            history=QoSHistoryPolicy.KEEP_LAST,
+            depth=1,
+            reliability=QoSReliabilityPolicy.BEST_EFFORT,
+            deadline=Duration(nanoseconds=int(1e9 / poses_qos_deadline))
         )
+        if self.relative:
+            self.create_subscription(
+                NamedPoseArray, "poses_relative",
+                self._poses_changed, qos_profile
+            )
+        else:
+            self.create_subscription(
+                NamedPoseArray, "poses",
+                self._poses_changed, qos_profile
+            )
 
         # Wait until order is received
         while (not self.has_initial_pose):
@@ -90,7 +101,16 @@ class Follow_Limo(Node):
 
         # Crazyflie position command publisher
         self.position_pub = self.create_publisher(Position, f'/{self.robot}/cmd_position', 10)
-        
+        if swarm:
+            self.timeHelper = self.swarm.timeHelper
+            self.allcfs = self.swarm.allcfs
+
+            # arm (one by one)
+            for cf in self.allcfs.crazyflies:
+                cf.arm(True)
+                self.timeHelper.sleep(1.0)
+
+        # self.timeHelper.sleep(2.0)
         # input("Press Enter to takeoff")
         self.timer = self.create_timer(self.timer_period, self.timer_callback)
 
@@ -118,6 +138,9 @@ class Follow_Limo(Node):
                     if self.i_landing < len(self.t_landing)-1:
                         self.i_landing += 1
                     else:
+                        if self.swarm:
+                            self.allcfs.arm(False)
+                            self.timeHelper.sleep(3.0)
                         self.reboot()
                         self.info('Exiting circle node')  
                         self.destroy_node()
@@ -183,8 +206,8 @@ class Follow_Limo(Node):
         self.t_landing = np.arange(t_max, 0.1, -self.timer_period)
         self.i_landing = 0
         self.r_landing = np.zeros((3, len(self.t_landing)))
-        self.r_landing[0,:] += self.final_pose[0] * np.ones(len(self.t_landing))
-        self.r_landing[1,:] += self.final_pose[1] * np.ones(len(self.t_landing))
+        self.r_landing[0,:] = self.final_pose[0] * np.ones(len(self.t_landing))
+        self.r_landing[1,:] = self.final_pose[1] * np.ones(len(self.t_landing))
         self.r_landing[2,:] = self.final_pose[2] * (self.t_landing / t_max)
 
 
@@ -226,8 +249,10 @@ class Follow_Limo(Node):
 
 
 def main():
-    rclpy.init()
-    follower = Follow_Limo()
+    swarm = Crazyswarm()
+    if not rclpy.ok():
+        rclpy.init()
+    follower = Follow_Limo(swarm)
     rclpy.spin(follower)
     follower.destroy_node()
     rclpy.shutdown()
