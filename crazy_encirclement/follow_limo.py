@@ -180,7 +180,7 @@ class Follow_Limo(Node):
                     self.final_pose[0] = robot_pose.pose.position.x
                     self.final_pose[1] = robot_pose.pose.position.y
                     self.final_pose[2] = robot_pose.pose.position.z
-                    self.landing_traj(2)
+                    self.landing_traj(3)
                     self.has_final = True
 
     def takeoff(self):
