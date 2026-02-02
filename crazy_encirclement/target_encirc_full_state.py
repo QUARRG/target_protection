@@ -3,7 +3,7 @@ import time
 import numpy as np
 from rclpy.node import Node
 from geometry_msgs.msg import PoseStamped
-from crazyflie_interfaces.msg import StringArray, Position
+from crazyflie_interfaces.msg import StringArray, Position, FullState
 from std_msgs.msg import Bool
 from std_srvs.srv import Empty
 from std_msgs.msg import Float32
@@ -13,6 +13,7 @@ from crazyflie_py import Crazyswarm
 from motion_capture_tracking_interfaces.msg import NamedPoseArray
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
 from rclpy.duration import Duration
+from crazy_encirclement.utils2  import generate_reference
 
 class CircleDistortion(Node):
     def __init__(self,swarm=None):
@@ -78,6 +79,7 @@ class CircleDistortion(Node):
         self.previous_pose = np.zeros(3)
         self.previous_pose_time = 0.0
         self.initial_pose = np.zeros(3)
+        self.previous_state = np.zeros(16)
         
         self.leader   = None
         self.follower = None     
@@ -156,7 +158,7 @@ class CircleDistortion(Node):
         self.create_subscription(Float32, f'/{self.follower}/baseline/phase', self._phase_callback_follower, 1)
 
         # Crazyflie position command publisher
-        self.position_pub = self.create_publisher(Position, f'/{self.robot}/cmd_position', 10)
+        self.full_state_pub = self.create_publisher(FullState, f'/{self.robot}/cmd_full_state', 10)
 
         # Publishers for phase differences
         self.publish_phase_diff_leader   = self.create_publisher(Float32, f'/{self.robot}/baseline/phase_diff/leader', 10)
@@ -242,6 +244,11 @@ class CircleDistortion(Node):
                     self.initial_pose[0] = robot_pose.pose.position.x
                     self.initial_pose[1] = robot_pose.pose.position.y
                     self.initial_pose[2] = robot_pose.pose.position.z   
+                    self.previous_state[0:3] = self.initial_pose.copy()
+                    self.previous_state[9]  = robot_pose.pose.orientation.x
+                    self.previous_state[10] = robot_pose.pose.orientation.y
+                    self.previous_state[11] = robot_pose.pose.orientation.z
+                    self.previous_state[12] = robot_pose.pose.orientation.w
                     self.initial_phase = wrap_to_2pi(np.arctan2(self.initial_pose[1], self.initial_pose[0]))
                     self.initial_radius = np.sqrt(self.initial_pose[0]**2 + self.initial_pose[1]**2)
                     self.previous_pose = self.initial_pose.copy()
@@ -396,11 +403,31 @@ class CircleDistortion(Node):
 
     def send_position(self, r):
         ''' Send position command to the crazyflie. '''
-        msg = Position()
+        msg = FullState()
         msg.x = float(r[0])
         msg.y = float(r[1])
         msg.z = float(r[2])
         self.position_pub.publish(msg)
+    def send_full_state(self,r):
+        v, v_dot,q_r, wr_r = generate_reference(self.previous_state,r,self.timer)
+        msg = FullState()
+        msg.pose.position.x = float(r[0])
+        msg.pose.position.y = float(r[1])
+        msg.pose.position.z = float(r[2])
+        msg.acc.x = float(v_dot[0])
+        msg.acc.y = float(v_dot[1])
+        msg.acc.z = float(v_dot[2])
+        msg.pose.orientation.x = float(q_r[0])
+        msg.pose.orientation.y = float(q_r[1])
+        msg.pose.orientation.z = float(q_r[2])
+        msg.pose.orientation.w = float(q_r[3])
+        msg.twist.linear.x = float(v[0])
+        msg.twist.linear.y = float(v[1])
+        msg.twist.linear.z = float(v[2])
+        msg.twist.angular.x = np.rad2deg(float(wr_r[0]))
+        msg.twist.angular.y = np.rad2deg(float(wr_r[1]))
+        msg.twist.angular.z = np.rad2deg(float(wr_r[2]))
+        self.full_state_pub.publish(msg)
 
 
 def main():

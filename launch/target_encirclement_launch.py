@@ -104,13 +104,14 @@ def parse_yaml(context):
     robots_list = [robot for robot in crazyflies['robots'] if crazyflies['robots'][robot]['enabled']]
 
     for robot in robots_list:
-    #     # Nodes for each robot
+        # Nodes for each robot
         Nodes.append(Node(
             package='crazy_encirclement',
-            executable='follow_limo',
-            name=robot+'follow_limo',
+            executable='target_encirclement',
+            name=robot+'_target_encirclement',
             output='screen',
-            parameters=[{'robot': robot}],
+            parameters=[{'robot': robot, 'number_of_agents': len(robots_list),'relative':relative} \
+                        | filter_yaml_content.get('FilterGPS', {})],
             ))
         
         # # GPS Node for each robot
@@ -130,15 +131,24 @@ def parse_yaml(context):
             output='screen',
             parameters=[{'robot_prefix': robot}]
         ))
+    
+    # Agents order node
+    Nodes.append(Node(
+        package='crazy_encirclement',
+        executable='agents_order',
+        name='agents_order',
+        output='screen',
+        parameters= [{'robot_data': robots_list}]
+    ))
 
-    if relative:
-        Nodes.append(Node(
-            package='crazy_encirclement',
-            executable='motion_capture_tracking_relative',
-            name='mocap_relative',
-            output='screen',
-            parameters=[{'robots': robots_list} | filter_yaml_content.get('FilterRelative', {})],
-        ))
+    # if relative:
+    Nodes.append(Node(
+        package='crazy_encirclement',
+        executable='motion_capture_tracking_relative',
+        name='poses_relative',
+        output='screen',
+        parameters=[{'robots': robots_list} | filter_yaml_content.get('FilterRelative', {})],
+    ))
 
     return Nodes
 

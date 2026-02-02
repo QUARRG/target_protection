@@ -155,7 +155,9 @@ class Follow_Limo(Node):
             to the crazyflie. All steps based on the Vicon position.
         """
         # Initialize the initial pose and phase if not already set using vicon data
+        # self.info(f"poses: {msg}")
         for robot_pose in msg.poses:
+            
             if robot_pose.name == self.robot:
                 if not self.has_initial_pose:      
                     self.initial_pose[0] = robot_pose.pose.position.x
@@ -170,21 +172,24 @@ class Follow_Limo(Node):
                     self.current_pose[0] = robot_pose.pose.position.x
                     self.current_pose[1] = robot_pose.pose.position.y
                     self.current_pose[2] = robot_pose.pose.position.z
+                    # self.info(f'current position{self.current_pose}')
 
 
 
                 # Set final pose when landing is commanded
                 elif (self.has_final == False) and (self.land_flag == True):
                     self.final_pose = np.zeros(3)
-                    self.info("Landing...")
                     self.final_pose[0] = robot_pose.pose.position.x
                     self.final_pose[1] = robot_pose.pose.position.y
                     self.final_pose[2] = robot_pose.pose.position.z
+                    # self.info(f'final position{self.final_pose}')
+                    self.info("Landing...")
                     self.landing_traj(3)
                     self.has_final = True
 
     def takeoff(self):
         ''' Take-off procedure to reach the hover height. '''
+        # self.info(f'takeoff position{self.r_takeoff[:, self.i_takeoff]}')
         self.send_position(self.r_takeoff[:, self.i_takeoff])
         
         # Increment take-off index or switch to hover state
@@ -222,10 +227,10 @@ class Follow_Limo(Node):
 
     def hover(self):
         ''' Hovering procedure at the hover height. '''
-        msg = Position()
-        msg.x = self.initial_pose[0]
-        msg.y = self.initial_pose[1]
-        msg.z = self.hover_height
+        # msg = Position()
+        # msg.x = self.initial_pose[0]
+        # msg.y = self.initial_pose[1]
+        # msg.z = self.hover_height
         self.send_position(np.array([self.initial_pose[0],self.initial_pose[1],self.hover_height]))
         # self.position_pub.publish(msg)
 

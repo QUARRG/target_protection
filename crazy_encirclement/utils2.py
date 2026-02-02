@@ -9,11 +9,14 @@ I3 = np.array([0,0,1]).T.reshape((3,1))
 w_r = 0 #reference yaw
 ca_1 = np.array([np.cos(w_r),np.sin(w_r),0]).T #auxiliar vector 
 
-def generate_reference(va_r,va_r_dot,Ca_r,dt):
+def generate_reference(prev_states, curr_pos,dt):
 
-
+    va_r = (curr_pos-prev_states[0:3])/dt
+    va_r = np.clip(va_r, -1,1)
+    va_r_dot = (va_r-prev_states[3:6])/dt
+    Ca_r = R.from_quat([prev_states[9:13]])
     fa_r = mb*va_r_dot +mb*g*I3 #+ Ca_r@D@Ca_r.T@va_r
-    f_T_r = I3.T@Ca_r.T@fa_r.T
+    # f_T_r = I3.T@Ca_r.inv().apply(fa_r)
     if np.linalg.norm(fa_r) != 0:
         r3 = fa_r.reshape(3,1)/np.linalg.norm(fa_r)
     else:
@@ -28,14 +31,16 @@ def generate_reference(va_r,va_r_dot,Ca_r,dt):
     r1 = (R3_so3(r2)@r3).reshape(3,1);
     Ca_r_new = np.hstack((r1, r2, r3))
     if np.linalg.det(Ca_r) != 0:
+        q_r = R.from_matrix(Ca_r_new)
         Wr_r = so3_R3(np.linalg.inv(Ca_r)@Ca_r_new)/dt
     else:
+        q_r = np.array([0,0,0,1])
         Wr_r = np.zeros((3,1))
 
-    angles = R.from_matrix(Ca_r_new).as_euler('zyx', degrees=False)
-
+    # angles = R.from_matrix(Ca_r_new).as_euler('zyx', degrees=False)
+    q_r = R.from_matrix(Ca_r_new)
     #Wr_r = Ca_b.T@Ca_r@Wr_r
-    return angles[1:3],Wr_r[2], f_T_r, Ca_r
+    return va_r, va_r_dot,q_r, Wr_r
 
 def R3_so3(w):
     v3 = w[2,0]
