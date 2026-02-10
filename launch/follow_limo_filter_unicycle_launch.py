@@ -107,11 +107,20 @@ def parse_yaml(context):
         # Nodes for each robot
         Nodes.append(Node(
             package='crazy_encirclement',
-            executable='follow_limo',
-            name=robot+'_follow_limo',
+            executable='follow_limo_filter_unicycle',
+            name=robot+'_follow_limo_filter_unicycle',
             output='screen',
-            parameters=[{'robot': robot, 'relative': relative}],
-            ))
+            parameters=[{'robot': robot, 'relative': relative} | filter_yaml_content.get('FilterUnicycle', {})]
+        ))
+
+        # GPS/Scanner II Node for each robot
+        Nodes.append(Node(
+            package='crazy_encirclement',
+            executable='gps_scanner_ii',
+            name=robot+'_gps_scanner_ii_node',
+            output='screen',
+            parameters=[{'robot': robot}],
+        ))
 
         # Watch dog node for each robot
         Nodes.append(Node(
@@ -120,15 +129,6 @@ def parse_yaml(context):
             name=robot+'_watch_dog',
             output='screen',
             parameters=[{'robot_prefix': robot}]
-        ))
-
-    if relative:
-        Nodes.append(Node(
-            package='crazy_encirclement',
-            executable='motion_capture_tracking_relative',
-            name='mocap_relative',
-            output='screen',
-            parameters=[{'robots': robots_list} | filter_yaml_content.get('FilterRelative', {})],
         ))
 
     return Nodes

@@ -8,23 +8,24 @@ from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy, QoSPre
 from rclpy.duration import Duration
 from scipy.spatial.transform import Rotation as R
 
-class MOCAP_relative(Node):
+class MocapRelative(Node):
     def __init__(self):
-        super().__init__('gps_scanner_node')
-        self.declare_parameter('drones', ['C01'])
-        self.declare_parameter('V_ego', [0.1, 0.1, 0.1])
-        self.declare_parameter('V_rel', [0.1, 0.1, 0.1])
-        self.declare_parameter('update_hz', 100.0)
+        super().__init__('mocap_relative_node')
+        # Initial parameters
+        self.declare_parameter('update_hz', 200.0)
         self.declare_parameter('reference_object', 'LIMO')
-
-        # self.robot = self.get_parameter('robot').get_parameter_value().string_value
-        # self.V_ego = self.get_parameter('V_ego').get_parameter_value().double_array_value
-        # self.V_rel = self.get_parameter('V_rel').get_parameter_value().double_array_value
-        self.update_hz = 200
+        self.update_hz = self.get_parameter('update_hz').get_parameter_value().double_value
         self.reference = self.get_parameter('reference_object').get_parameter_value().string_value
+
+        # Transformation matrices
         self.R_wc = R.from_quat([0, 0, 0, 1])
         self.R_cw = R.from_quat([0, 0, 0, 1])
+
         self.has_mocap = False
+        self.R0 = {}
+            
+        # QoS Profile
+        poses_qos_deadline = self.update_hz  # Hz
         self.R_d0w = {}
         
         # qos_profile = QoSProfile(reliability =QoSReliabilityPolicy.BEST_EFFORT,
@@ -41,20 +42,37 @@ class MOCAP_relative(Node):
             deadline=Duration(nanoseconds=int(1e9 / poses_qos_deadline))
         )
         # qos_profile.deadline = deadline_duration
+
         self.create_subscription(
             NamedPoseArray, "/poses",
             self._callback, qos_profile
         )
-        # 
+         
         self.ref_pose = PoseStamped()
-        self.scanner = NamedPoseArray()
+        self.relative_poses = NamedPoseArray()
         self.timer = self.create_timer(1/self.update_hz, self._timer_callback)
         self.relative_position_pub = self.create_publisher(NamedPoseArray, 'poses_relative', qos_profile)
-        # self.vicon_position_pub = self.create_publisher(PoseStamped, f'/{self.robot}/vicon_position', 10)
 
     def _callback(self, msg: NamedPoseArray):
         '''Callback function to process incoming NamedPoseArray messages from Vicon and publish noisy GPS positions.'''
         if msg:
+            self.has_mocap = True
+            self.ref_pose.header = msg.header
+            self.relative_poses.header = msg.header
+            self.relative_poses.poses = []
+            
+            # Getting reference pose
+            for pose in msg.poses:
+                if pose.name == self.reference:
+                    self.ref_pose.pose.position.x = pose.pose.position.x
+                    self.ref_pose.pose.position.y = pose.pose.position.y
+                    self.ref_pose.pose.position.z = pose.pose.position.z
+                    qx = pose.pose.orientation.x
+                    qy = pose.pose.orientation.y
+                    qz = pose.pose.orientation.z
+                    qw = pose.pose.orientation.w
+                    self.R_wc = R.from_quat([qx, qy, qz, qw])  # Car to world
+                    self.R_cw = self.R_wc.inv()                # World to Car
             if not self.R_d0w:
                 for pose in msg.poses:
                     R_aux = R.from_quat([pose.pose.orientation.x,pose.pose.orientation.y,pose.pose.orientation.z,pose.pose.orientation.w])
@@ -106,16 +124,19 @@ class MOCAP_relative(Node):
             # self.vicon_position_pub.publish(self.ref_pose)
 
     def _timer_callback(self):
-        '''Timer callback to publish the noisy GPS position at the specified rate.'''
+        '''Timer callback to publish the relative poses at the specified rate.'''
         if self.has_mocap:
-            self.relative_position_pub.publish(self.scanner)
+            self.relative_position_pub.publish(self.relative_poses)
+
 
 def main():
-    '''Main function to initialize the GPS node and start spinning.'''
+    '''Main function to initialize the relative position node and start spinning.'''
     rclpy.init()
-    relative_pos_node = MOCAP_relative()
+    relative_pos_node = MocapRelative()
     rclpy.spin(relative_pos_node)
     relative_pos_node.destroy_node()
     rclpy.shutdown()
+
+
 if __name__ == '__main__':
     main()

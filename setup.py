@@ -30,8 +30,10 @@ setup(
             'circle_distortion_filters_combined = crazy_encirclement.circle_distortion_filters_combined:main',
             'gps = crazy_encirclement.gps:main',
             'gps_scanner = crazy_encirclement.gps_scanner:main',
+            'gps_scanner_ii = crazy_encirclement.gps_scanner_ii:main',
             'motion_capture_tracking_relative = crazy_encirclement.motion_capture_tracking_relative:main',
             'follow_limo = crazy_encirclement.follow_limo:main',
+            'follow_limo_filter_unicycle = crazy_encirclement.follow_limo_filter_unicycle:main',
             'target_encirclement= crazy_encirclement.target_encirclement:main'
         ],
     },

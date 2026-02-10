@@ -437,6 +437,148 @@ class BaselineFilter(BaseFilter):
         self.pub_gain.publish(gain_msg)
 
         return phase_msg_test, desired_pose_msg
+
+
+class FilterUnicycle:
+    ''' LIEKF for encirclement tasks using unicycle-like measurements.
+    '''
+    def __init__(self, name: str, params: dict, node: Node):
+        self.name = name
+        self.params = params
+        self.node: Node = node
+
+        # Initialize filter parameters 
+        self.P: np.ndarray  = np.diag(np.square(self.params.get('P', np.eye(5))))
+        self.Q: np.ndarray  = np.diag(np.square(self.params.get('Q', np.eye(5))))
+        self.V: np.ndarray  = np.diag(np.square(self.params.get('V', np.eye(2))))
+
+        # Initial state
+        self.p: np.ndarray  = self.params.get('position_guess', np.zeros(2))
+        self.theta: float = self.params.get('heading_guess', 0.0)
+        self.R: np.ndarray  = self._rotm(self.theta)
+        self.linear_speed: float  = self.params.get('linear_speed_guess', 0.0)
+        self.angular_speed: float = self.params.get('angular_speed_guess', 0.0)
+
+        # Constants
+        self.dim_state: int = 5
+        self.dim_meas: int = 2
+        self.I = np.eye(self.dim_state)
+
+    def predict(self, dt: float) -> dict:
+        ''' Propagates the state and covariance forward in time.
+            Model: Constant Velocity Unicycle.
+            
+            Args:
+                dt (float): Time step in seconds.
+        '''
+        # 1. State Propagation (Nonlinear Dynamics)
+        # R_next = R * Exp(omega * dt)
+        # p_next = p + R * [v, 0]' * dt
+        R_delta = self._rotm(self.angular_speed * dt)
+        self.R = self.R @ R_delta
+        self.theta = np.arctan2(self.R[1,0], self.R[0,0])
+        self.p = self.p + (self.R @ np.array([[self.linear_speed], [0]])).flatten() * dt
+
+        # 2. Jacobian Calculation (A_t)
+        # [ 0  -w   0  -1   0 ]
+        # [ w   0   v   0  -1 ]
+        # [ 0   0   0   0   0 ] ...
+        A = np.zeros((5, 5))
+        A[0, 1] = -self.omega
+        A[0, 3] = -1.0
+        
+        A[1, 0] = self.omega
+        A[1, 2] = self.v
+        A[1, 4] = -1.0
+
+        # 3. Covariance Propagation
+        # Discrete transition matrix F = I + A * dt
+        F = self.I + A * dt
+        self.P = F @ self.P @ F.T + self.Q
+        
+        return {
+            'position': self.p,
+            'heading': self.theta,
+            'linear_speed': self.linear_speed,
+            'angular_speed': self.angular_speed
+        }
+
+    def update(self,
+               y_rel: np.ndarray,
+               R_drone: np.ndarray,
+               p_drone: np.ndarray) -> None:
+        """
+        Updates the state using a relative 3D measurement from the drone.
+
+        Args:
+            y_rel (np.array): Relative 3D position vector [x, y, z] (Vehicle seen by Drone).
+            R_drone (np.array): Drone's rotation matrix (3x3) in Global Frame.
+            p_drone (np.array): Drone's position vector [x, y, z] in Global Frame.
+        """
+        # 1. Virtual Global Measurement Construction
+        # Transform relative 3D vector to Global 3D: y_global = R_drone * y_rel + p_drone
+        y_global_3d = R_drone @ y_rel + p_drone
+
+        # Project to 2D (Virtual GPS): y_t = Pi * y_global_3d
+        y_hat = y_global_3d[:2] # Take only x, y
+
+        # 2. Invariant Innovation
+        # z = R^T * (y_hat - p_est)
+        # Error between measurement and estimate, projected into the estimated local frame
+        z = self.R.T @ (y_hat - self.p)
+
+        # 3. Measurement Jacobian (H_t)
+        # H selects the first two components of the error state (xi_x, xi_y)
+        H = np.zeros((2, 5))
+        H[0, 0] = 1.0
+        H[1, 1] = 1.0
+
+        # 4. Effective Noise Covariance (V_t)
+        # We must rotate the 3D sensor noise into the 2D global frame
+        # V_t = (Pi * R_drone) * V_r * (Pi * R_drone)^T
+        # Projection matrix Pi is implicitly slicing [:2]
+        M = R_drone[:2, :] # 2x3 matrix to project 3D to 2D
+        V = M @ self.V @ M.T
+
+        # 5. Kalman Gain Calculation
+        S = H @ self.P @ H.T + V
+        S = 0.5 * (S + S.T) + np.eye(S.shape[0]) * 1e-8 # Ensure symmetry and numerical stability
+        S_inv = np.linalg.inv(S)
+        K = self.P @ H.T @ S_inv
+
+        # 6. State Update (left-Invariant update)
+        xi = K @ z.flatten() # Correction in the algebra
+
+        # Decompose xi
+        xi_p     = xi[0:2] 
+        xi_theta = xi[2]
+        xi_angular_speed = xi[3]
+        xi_linear_speed  = xi[4]
+
+        # Update Geometric State X <- X * exp(xi)
+        # Position: p_new = p + R * xi_p
+        self.p = self.p + self.R @ xi_p
+
+        # Heading: R_new = R * Exp(xi_theta)
+        R_correction = self._rotm(xi_theta)
+        self.R = self.R @ R_correction
+        self.theta = np.arctan2(self.R[1,0], self.R[0,0])
+
+        # Update Parameters (Additive)
+        self.angular_speed += xi_angular_speed
+        self.linear_speed  += xi_linear_speed
+        
+        # 7. Covariance Update
+        I_KH = np.eye(self.dim_state) - K @ H
+        self.P = I_KH @ self.P @ I_KH.T + K @ V @ K.T
+        self.P = 0.5 * (self.P + self.P.T) # Ensure symmetry
+
+    @staticmethod
+    def _rotm(theta):
+        """Create 2x2 rotation matrix."""
+        c, s = np.cos(theta), np.sin(theta)
+        return np.array([[c, -s], [s, c]])
+        
 # ----------------------------------------------------------------------
 
 class Baseline3DFilter(BaseFilter):
