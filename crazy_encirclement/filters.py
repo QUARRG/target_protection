@@ -232,6 +232,7 @@ class BaseFilter:
         self.P = (self.P + self.P.T) / 2  # Ensure symmetry
 
         # Publish predicted pose and phase
+        #still have to publish xz phase
         current_pose_msg, desired_pose_msg, phase_msg, radius_msg = self.build_pose_phase_msgs()
         self.pub_pose.publish(current_pose_msg)
         self.pub_phase.publish(phase_msg)
@@ -471,6 +472,7 @@ class Baseline3DFilter(BaseFilter):
         self.pub_gain   = self.node.create_publisher(Float32, f'/{self.name}/baseline/controller_gain', 10)
         self.pub_pose   = self.node.create_publisher(PoseWithCovarianceStamped, f'/{self.name}/baseline/pose', 10)
         self.pub_phase  = self.node.create_publisher(Float32, f'/{self.name}/baseline/phase', 10)
+        self.pub_phase_xz  = self.node.create_publisher(Float32, f'/{self.name}/baseline/phase_xz', 10)
         self.pub_radius = self.node.create_publisher(Float32, f'/{self.name}/baseline/radius', 10)
         self.node.info(f'Baseline filter for agent {self.name} initialized.')
     
