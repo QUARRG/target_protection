@@ -5,14 +5,14 @@ from scipy.linalg import logm
 D = np.zeros((3,3))
 mb= 1
 g = 9.81
-I3 = np.array([0,0,1]).T.reshape((3,1))
+I3 = np.array([0,0,1])
 w_r = 0 #reference yaw
 ca_1 = np.array([np.cos(w_r),np.sin(w_r),0]).T #auxiliar vector 
 
 def generate_reference(prev_states, curr_pos,dt):
 
     va_r = (curr_pos-prev_states[0:3])/dt
-    va_r = np.clip(va_r, -1,1)
+    
     va_r_dot = (va_r-prev_states[3:6])/dt
     Ca_r = R.from_quat([prev_states[9:13]])
     fa_r = mb*va_r_dot +mb*g*I3 #+ Ca_r@D@Ca_r.T@va_r
@@ -22,21 +22,24 @@ def generate_reference(prev_states, curr_pos,dt):
     else:
         r3 = np.zeros((3,1))
 
-    aux = R3_so3(r3)@ca_1;
+    aux = R3_so3(r3)@ca_1
     if np.linalg.norm(aux) != 0:
-        r2 = aux.reshape(3,1)/np.linalg.norm(aux);
+        r2 = aux.reshape(3,1)/np.linalg.norm(aux)
     else:
         r2 = np.zeros((3,1))
 
-    r1 = (R3_so3(r2)@r3).reshape(3,1);
+    r1 = (R3_so3(r2)@r3).reshape(3,1)
     Ca_r_new = np.hstack((r1, r2, r3))
     if np.linalg.det(Ca_r) != 0:
         q_r = R.from_matrix(Ca_r_new)
-        Wr_r = so3_R3(np.linalg.inv(Ca_r)@Ca_r_new)/dt
+        Wr_r = so3_R3(Ca_r.T@Ca_r_new)/dt
     else:
         q_r = np.array([0,0,0,1])
         Wr_r = np.zeros((3,1))
-
+    #clipping all values for safety
+    # va_r = np.clip(va_r, -1,1)
+    # Wr_r = np.clip(Wr_r, -np.pi,np.pi)
+    # va_r_dot = np.clip(va_r_dot, -1,1)
     # angles = R.from_matrix(Ca_r_new).as_euler('zyx', degrees=False)
     q_r = R.from_matrix(Ca_r_new)
     #Wr_r = Ca_b.T@Ca_r@Wr_r

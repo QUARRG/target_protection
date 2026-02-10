@@ -137,6 +137,7 @@ def phase_controller(phase_ego, phase_leader, phase_follower, omega_nominal, k_p
     eps = 1e-6  # small constant to avoid division by zero
     gain =  k_p * (1/(error_ahead + eps) + 1/(error_behind + eps))
     control_signal = omega_nominal + gain
+    control_signal = np.clip(control_signal, -1,1)
 
     return control_signal, gain
 # ----------------------------------------------------------------------
@@ -436,3 +437,89 @@ class BaselineFilter(BaseFilter):
 
         return phase_msg_test, desired_pose_msg
 # ----------------------------------------------------------------------
+
+class Baseline3DFilter(BaseFilter):
+    ''' Baseline filter without state estimation for encirclement tasks.
+    '''
+    def __init__(self, name: str, embedding_fn_name: str, params: dict, node: Node):
+        self.name = name
+        self.embedding_fn_name = embedding_fn_name
+        self.params = params
+        self.node: Node = node
+
+        # Checking embedding function
+        if embedding_fn_name not in REGISTRED_OMEGA_FUNCTIONS:
+            raise ValueError(f"Embedding function '{embedding_fn_name}' is not allowed. Choose from: {list(REGISTRED_OMEGA_FUNCTIONS.keys())}")
+        self.embedding_fn: Callable = REGISTRED_OMEGA_FUNCTIONS[embedding_fn_name]
+
+        # Initialize parameters         
+        self.k_phi: float = self.params.get('k_phi', 0.5)
+        self.omega_nominal: float = self.params.get('omega_nominal', 0.5)
+        self.frame_id: str = self.params.get('frame_id', 'world')
+        self.radius: float = self.params.get('radius_guess', 2.0)
+        self.radius_nominal: float = self.params.get('radius_nominal', 2.0)
+
+        self.s: float = np.log(self.radius)
+        self.Rc: np.ndarray = build_Rc(wrap_to_2pi(self.params.get('phase_guess', 0.0)))
+        self.Re = build_Re(self.embedding_fn, self.params.get('phase_guess_xz', 0.0))
+        self.normal = self.Re@np.array([0., 0., 1.])
+        self.dt : float = self.params.get('dt', 0.1)
+        self.e_x: np.ndarray = np.asarray([[1.], [0.], [0.]])
+
+        # Publishers
+        self.pub_omega  = self.node.create_publisher(Float32, f'/{self.name}/baseline/omega', 10)
+        self.pub_gain   = self.node.create_publisher(Float32, f'/{self.name}/baseline/controller_gain', 10)
+        self.pub_pose   = self.node.create_publisher(PoseWithCovarianceStamped, f'/{self.name}/baseline/pose', 10)
+        self.pub_phase  = self.node.create_publisher(Float32, f'/{self.name}/baseline/phase', 10)
+        self.pub_radius = self.node.create_publisher(Float32, f'/{self.name}/baseline/radius', 10)
+        self.node.info(f'Baseline filter for agent {self.name} initialized.')
+    
+    def predict(self, current_pose: np.ndarray, current_vel: np.ndarray, phases_xy: list[float], phases_xz: list[float]):
+        prev_leader_phase_xy, prev_ego_phase_xy, prev_follower_phase_xy = phases_xy
+        prev_leader_phase_xz, prev_ego_phase_xz, prev_follower_phase_xz = phases_xz
+        Re = build_Re(self.embedding_fn, prev_ego_phase_xy)
+        Rc = build_Rc(prev_ego_phase_xy)
+        p = Rc.T @ Re.T @ current_pose
+        self.radius  = np.sqrt(p[0]**2 + p[1]**2 + p[2]**2)
+        if np.linalg.norm(current_vel) > 0.01 and np.linalg.norm(current_pose) != 0:
+            self.normal = np.cross(current_vel, current_pose)/np.linalg.norm(np.cross(current_vel, current_pose))
+        pose = self.Re.T @ current_pose
+        current_ego_phase_xy = wrap_to_2pi(np.arctan2(pose[1], pose[0]))
+        current_ego_phase_xz = wrap_to_2pi(np.arctan2(pose[2], pose[0]))
+        # Rc = build_Rc(current_ego_phase)
+        # curr_ego_phase = np.arctan2(p[1], p[0])
+
+        omega_z, gain_z = phase_controller(current_ego_phase_xy, prev_leader_phase_xy, prev_follower_phase_xy, self.omega_nominal, self.k_phi)
+        omega_y, gain_y = phase_controller(current_ego_phase_xz, prev_leader_phase_xz, prev_follower_phase_xz, self.omega_nominal/10, self.k_phi)
+        # Update phase
+        des_ego_pose_2D = np.array([self.radius_nominal*np.cos(current_ego_phase_xy),self.radius_nominal*np.sin(current_ego_phase_xy), 0])
+        desired_ego_pose = exp_SO3(np.asarray([0., 0., omega_z *0.6])) @ des_ego_pose_2D
+        desired_ego_phase = wrap_to_2pi(np.arctan2(desired_ego_pose[1], desired_ego_pose[0]))
+        self.Re = exp_SO3(np.asarray([0., omega_y *0.6, 0.])) @ self.Re
+        desired_ego_pose_3D = self.Re@desired_ego_pose
+        
+        # Publish predicted pose, phase and controller gain
+        current_pose_msg, desired_pose_msg, phase_msg, radius_msg = self.build_pose_phase_msgs()
+        phase_msg_test = Float32()
+        phase_msg_test.data = current_ego_phase
+        # Building desired pose message with nominal radius
+        desired_pose_msg = PoseStamped()
+        desired_pose_msg.header.frame_id = self.frame_id
+        desired_pose_msg.header.stamp = self.node.get_clock().now().to_msg()
+        desired_pose_msg.pose.position = Point(x=desired_ego_pose_3D[0], y=desired_ego_pose_3D[1], z=desired_ego_pose_3D[2])
+        desired_pose_msg.pose.orientation = Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+        radius_msg = Float32()
+        radius_msg.data = self.radius
+        self.pub_pose.publish(current_pose_msg)
+        self.pub_phase.publish(phase_msg_test)
+        self.pub_radius.publish(radius_msg)
+
+        omega_msg = Float32()
+        omega_msg.data = omega
+        self.pub_omega.publish(omega_msg)
+
+        gain_msg = Float32()
+        gain_msg.data = gain
+        self.pub_gain.publish(gain_msg)
+
+        return phase_msg_test, desired_pose_msg
