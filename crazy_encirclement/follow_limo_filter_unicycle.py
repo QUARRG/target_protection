@@ -158,10 +158,17 @@ class FollowUnicycle(Node):
 
             # Following state
             elif self.state == 2:
-                # The set point is defined in the initial pose frame, so we need to transform it to the current framee using the current transformation matrix T_curr and the initial transformation matrix T_init
-                T_init_inv = np.linalg.inv(self.T_init)
-                T_des = self.T_curr @ T_init_inv @ np.block([[np.eye(3), self.set_point.reshape(3,1)], [0, 0, 0, 1]])
-                r_des = T_des[0:3, 3]
+                # Get current pose with respect to initial pose
+                T_rel = np.linalg.inv(self.T_init) @ self.T_curr
+
+                # Desired pose based on set point
+                T_set_point = np.eye(4)
+                T_set_point[0:3, 0:3] = T_rel[0:3, 0:3]
+                T_set_point[0:3, 3] = self.set_point
+
+                # Transform desired pose back to world frame
+                T_des = self.T_init @ T_set_point
+                r_des = T_des[0:3, 3]       
                 self.send_position(r_des)
 
             # Landing state
