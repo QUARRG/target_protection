@@ -9,6 +9,7 @@ from std_srvs.srv import Empty
 from std_msgs.msg import Float32
 from crazy_encirclement.filters import BaselineFilter, wrap_to_2pi, wrap_to_pi
 from crazy_encirclement_interfaces.msg import Metadata
+from nav_msgs.msg import Odometry
 
 
 class CircleDistortion(Node):
@@ -71,6 +72,7 @@ class CircleDistortion(Node):
 
         self.final_pose   = np.zeros(3)
         self.current_pose = np.zeros(3)
+        self.current_vel = np.zeros(3)
         self.previous_pose = np.zeros(3)
         self.previous_pose_time = 0.0
         self.initial_pose = np.zeros(3)
@@ -82,7 +84,7 @@ class CircleDistortion(Node):
         self.i_takeoff = 0
 
         self.phases = np.zeros(self.n_agents)
-        self.phases_normal = np.zeros(self.n_agents)
+        self.phases_normals = np.zeros(self.n_agents)
 
         self.state = 0
         # 0-take-off, 1-hover, 2-encirclement, 3-landing
@@ -104,12 +106,16 @@ class CircleDistortion(Node):
             10)
 
         # Subscription to Vicon positions of the robot that are coming from the gps node
+        # self.create_subscription(
+        #     PoseStamped, f'/{self.robot}/vicon_position',
+        #     self._poses_changed,
+        #     10
+        # )
         self.create_subscription(
-            PoseStamped, f'/{self.robot}/vicon_position',
-            self._poses_changed,
+            Odometry, f'/{self.robot}/odom',
+            self._odom_changed,
             10
         )
-
         # Subscription to agents order
         self.create_subscription(
             StringArray, '/agents_order',
@@ -166,12 +172,14 @@ class CircleDistortion(Node):
                     self.phases[1] = self.initial_phase
                     self.takeoff()
                     self.baseline.pub_phase.publish(Float32(data=self.phases[1]))
+                    self.baseline.pub_normal_phase.publish(Float32(data=self.phase_normal[1]))
                     self.publish_phase_differences()
 
             # Hover state
             elif self.state == 1:
                 self.hover()
                 self.baseline.pub_phase.publish(Float32(data=self.phases[1]))
+                self.baseline.pub_normal_phase.publish(Float32(data=self.phase_normal[1]))
                 self.publish_phase_differences()
             
             # Encirclement state
@@ -179,11 +187,12 @@ class CircleDistortion(Node):
                 if self.has_phase_follower and self.has_phase_leader and self.has_phase_follower_normal and self.has_phase_leader_normal:                  
                     # Propagating the system
                     current_pose = self.current_pose.copy()
+                    current_vel = self.current_vel.copy()
                     current_pose[2] -= self.hover_height  # Remove height offset
-                    phase, phase_normal, position = self.baseline.predict(current_pose, self.phases, self.phases_normal)
+                    phase, normal_phase, position = self.baseline.predict(current_pose, current_vel, self.phases, self.phases_normal)
                     # Updating internal parameters
                     self.phases[1] = phase.data
-                    self.phases_normal[1] = phase_normal.data
+                    self.phases_normals[1] = normal_phase.data
                     self.publish_phase_differences()
 
                     # Sending position command
@@ -211,7 +220,7 @@ class CircleDistortion(Node):
         except KeyboardInterrupt:
             self.info('Exiting open loop command node')
 
-    def _poses_changed(self, robot_pose: PoseStamped):
+    def _poses_changed(self, msg: Odometry):
         """ Topic update callback to the motion capture lib's
             poses topic to send through the external position
             to the crazyflie. All steps based on the Vicon position.
@@ -238,6 +247,52 @@ class CircleDistortion(Node):
             delta_pose = self.current_pose - self.previous_pose
             delta_velocity = delta_pose / ( (robot_pose.header.stamp.sec + robot_pose.header.stamp.nanosec * 1e-9) - self.previous_pose_time )
             omega_3D = np.cross(self.previous_pose, delta_velocity) / (np.linalg.norm(self.previous_pose)**2 + 1e-6)
+            self.previous_pose = self.current_pose.copy()
+            self.previous_pose_time = robot_pose.header.stamp.sec + robot_pose.header.stamp.nanosec * 1e-9
+            self.publish_estimated_omega_x.publish(Float32(data=omega_3D[0]))
+            self.publish_estimated_omega_y.publish(Float32(data=omega_3D[1]))
+            self.publish_estimated_omega_z.publish(Float32(data=omega_3D[2]))
+
+        # Set final pose when landing is commanded
+        elif (self.has_final == False) and (self.land_flag == True):
+            self.final_pose = np.zeros(3)
+            self.info("Landing...")
+            self.final_pose[0] = robot_pose.pose.position.x
+            self.final_pose[1] = robot_pose.pose.position.y
+            self.final_pose[2] = robot_pose.pose.position.z
+            self.landing_traj(3)
+            self.has_final = True
+
+    def _odom_changed(self, msg: Odometry):
+        """ Topic update callback to the motion capture lib's
+            poses topic to send through the external position
+            to the crazyflie. All steps based on the Vicon position.
+        """
+        # Initialize the initial pose and phase if not already set using vicon data
+        robot_pose = msg.pose
+        robot_vel = msg.twist
+        if not self.has_initial_pose:      
+            self.initial_pose[0] = robot_pose.pose.position.x
+            self.initial_pose[1] = robot_pose.pose.position.y
+            self.initial_pose[2] = robot_pose.pose.position.z   
+            self.initial_phase = wrap_to_2pi(np.arctan2(self.initial_pose[1], self.initial_pose[0]))
+            self.initial_radius = np.sqrt(self.initial_pose[0]**2 + self.initial_pose[1]**2)
+            self.previous_pose = self.initial_pose.copy()
+            self.previous_pose_time = robot_pose.header.stamp.sec + robot_pose.header.stamp.nanosec * 1e-9
+            self.takeoff_traj(4)
+            self.has_initial_pose = True    
+            
+        # Update current pose if not landing
+        elif not self.land_flag:
+            self.current_pose[0] = robot_pose.pose.position.x
+            self.current_pose[1] = robot_pose.pose.position.y
+            self.current_pose[2] = robot_pose.pose.position.z
+            self.current_vel[0] = robot_vel.twist.linear.x
+            self.current_vel[1] = robot_vel.twist.linear.y
+            self.current_vel[2] = robot_vel.twist.linear.z
+
+            # Estimate 3D omega using the delta pose and velocity cross product
+            omega_3D = np.cross(self.current_pose, self.current_vel) / (np.linalg.norm(self.current_pose)**2 + 1e-6)
             self.previous_pose = self.current_pose.copy()
             self.previous_pose_time = robot_pose.header.stamp.sec + robot_pose.header.stamp.nanosec * 1e-9
             self.publish_estimated_omega_x.publish(Float32(data=omega_3D[0]))
