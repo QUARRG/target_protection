@@ -18,7 +18,6 @@ class GPSScannerNodeII(Node):
         self.robot = self.get_parameter('robot').get_parameter_value().string_value
         self.update_hz = self.get_parameter('update_hz').get_parameter_value().double_value
 
-        poses_qos_deadline = 100.0  # Hz
         qos_profile = QoSProfile(reliability =QoSReliabilityPolicy.BEST_EFFORT,
                 history=QoSHistoryPolicy.KEEP_LAST,
                 depth=1,
@@ -34,7 +33,7 @@ class GPSScannerNodeII(Node):
 
         self.ego_pose = PoseStamped()
         self.scanner  = NamedPoseArray()
-        self.gps_scanner_poses_pub = self.create_publisher(NamedPoseArray, f'/{self.robot}/gps_scanner_poses', 10)
+        self.gps_scanner_poses_pub = self.create_publisher(NamedPoseArray, f'/{self.robot}/gps_scanner_ii_poses', 10)
         
         # Create latching publisher for initial pose (transient local QoS for late joiners)
         initial_pose_qos = QoSProfile(

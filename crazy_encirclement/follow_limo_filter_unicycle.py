@@ -7,7 +7,7 @@ from crazyflie_interfaces.msg import StringArray, Position
 from std_msgs.msg import Bool
 from std_srvs.srv import Empty
 from std_msgs.msg import Float32
-from crazy_encirclement.filters import FilterUnicycle, wrap_to_2pi, wrap_to_pi
+from crazy_encirclement.filters import FilterUnicycle
 from crazy_encirclement_interfaces.msg import Metadata
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy, QoSDurabilityPolicy, QoSPresetProfiles
 from motion_capture_tracking_interfaces.msg import NamedPoseArray
@@ -51,9 +51,9 @@ class FollowUnicycle(Node):
         self.declare_parameter('seed', 42)        
         
         # Get filter parameters
-        P_list = self.get_parameter('P').value
-        Q_list = self.get_parameter('Q').value
-        V_list = self.get_parameter('V').value
+        self.P_list = self.get_parameter('P').value
+        self.Q_list = self.get_parameter('Q').value
+        self.V_list = self.get_parameter('V').value
         self.predict_hz = self.get_parameter('predict_hz').value
         self.update_hz  = self.get_parameter('update_hz').value
 
@@ -66,20 +66,17 @@ class FollowUnicycle(Node):
 
         # Flags and variables
         self.timer_period = 1.0 / self.predict_hz  # seconds
-
         self.has_initial_pose = False
         self.has_final = False
         self.land_flag = False
 
-        self.previous_pose_time = 0.0
         self.T_init  = np.eye(4)
         self.T_final = np.eye(4)
         self.T_curr  = np.eye(4)
-        self.set_point = np.array([0.5, 0., self.hover_height])
+        self.set_point = np.array([-0.3, 0., 0.3])  # Offset from LIMO position
 
         self.i_landing = 0
         self.i_takeoff = 0
-
         self.state = 0
         # 0-take-off, 1-hover, 2-encirclement, 3-landing
 
@@ -100,7 +97,6 @@ class FollowUnicycle(Node):
             10)
         
         # Subscribe to motion capture poses
-        poses_qos_deadline = 100  # Hz
         qos_profile = QoSProfile(reliability =QoSReliabilityPolicy.BEST_EFFORT,
                 history=QoSHistoryPolicy.KEEP_LAST,
                 depth=1,
@@ -128,8 +124,47 @@ class FollowUnicycle(Node):
         while (not self.has_initial_pose):
             rclpy.spin_once(self, timeout_sec=0.1)
 
+        # Subscribe to gps scanner topic to update filter with measurements
+        self.create_subscription(
+            NamedPoseArray,
+            f'/{self.robot}/gps_scanner_ii_poses',
+            self._update_callback,
+            10
+        )
+        
+        self.LIMO_pose = None
+        # Wait until LIMO pose has arrived
+        while (self.LIMO_pose is None):
+            rclpy.spin_once(self, timeout_sec=0.1)
+
+        # Initial noise using P 
+        initialization_noise = np.random.multivariate_normal(np.zeros(len(self.P_list)), np.diag(np.square(self.P_list)))
+
+        # Initial states
+        x_init = self.LIMO_pose.pose.position.x + initialization_noise[0]
+        y_init = self.LIMO_pose.pose.position.y + initialization_noise[1]
+        heading_init = np.arctan2(self.LIMO_pose.pose.position.y - self.T_init[1, 3], self.LIMO_pose.pose.position.x - self.T_init[0, 3]) + initialization_noise[2]
+        angular_speed_init = 0.0 + initialization_noise[3]
+        linear_speed_init = 0.0 + initialization_noise[4]
+        z_ground_init = self.LIMO_pose.pose.position.z + initialization_noise[5]
+
+        # Create filter instance using actual measured initial values
+        self.filter = {
+            'P': self.P_list,
+            'Q': self.Q_list,
+            'V': self.V_list,
+            'position_guess': [x_init, y_init],
+            'heading_guess': heading_init,
+            'angular_speed_guess': angular_speed_init,
+            'linear_speed_guess': linear_speed_init,
+            'z_ground_guess': z_ground_init
+        }
+        self.filter = FilterUnicycle(self.robot, self.filter, self)
+        
         # Crazyflie position command publisher
         self.position_pub = self.create_publisher(Position, f'/{self.robot}/cmd_position', 10)
+        
+        # Arming all drones
         if swarm:
             self.timeHelper = self.swarm.timeHelper
             self.allcfs = self.swarm.allcfs
@@ -156,19 +191,19 @@ class FollowUnicycle(Node):
             elif self.state == 1:
                 self.hover()
 
-            # Following state
+            # Following LIMO
             elif self.state == 2:
-                # Get current pose with respect to initial pose
-                T_rel = np.linalg.inv(self.T_init) @ self.T_curr
+                # Predicted LIMO states
+                limo_states: dict = self.filter.predict(self.timer_period)
+                limo_3d_position = np.array([*limo_states['position'], limo_states['z_ground']])
+                
+                # Adding set point offset to the predicted position considering the limo frame (not world frame)
+                limo_3d_rotation = R.from_euler('z', limo_states['heading']).as_matrix()
+                projected_set_point = limo_3d_rotation @ self.set_point
+                limo_3d_position += projected_set_point
 
-                # Desired pose based on set point
-                T_set_point = np.eye(4)
-                T_set_point[0:3, 0:3] = T_rel[0:3, 0:3]
-                T_set_point[0:3, 3] = self.set_point
-
-                # Transform desired pose back to world frame
-                T_des = self.T_init @ T_set_point
-                r_des = T_des[0:3, 3]       
+                # Desired position in the Vicon frame
+                r_des = self._get_desired_position(limo_3d_position)   
                 self.send_position(r_des)
 
             # Landing state
@@ -188,6 +223,19 @@ class FollowUnicycle(Node):
 
         except KeyboardInterrupt:
             self.info('Exiting open loop command node')
+
+    def _update_callback(self, msg: NamedPoseArray):
+        ''' Callback to update the filter with new GPS measurements. '''
+        # Extract measurement for the robot
+        for pose in msg.poses:
+            if 'limo' in pose.name.lower():
+                # Relative pose of LIMO in the current robot frame
+                self.LIMO_pose = pose
+
+        # Update filter with new measurement
+        if self.LIMO_pose is not None:
+            measurement = np.array([self.LIMO_pose.pose.position.x, self.LIMO_pose.pose.position.y, self.LIMO_pose.pose.position.z])
+            self.filter.update(measurement)
 
     def _poses_changed(self, msg):
         """ Topic update callback to the motion capture lib's
@@ -211,17 +259,28 @@ class FollowUnicycle(Node):
 
                 # Set final pose when landing is commanded
                 elif (self.has_final == False) and (self.land_flag == True):
-                    self.T_final = np.eye(4)
-                    self.T_final[0, 3] = robot_pose.pose.position.x
-                    self.T_final[1, 3] = robot_pose.pose.position.y
-                    self.T_final[2, 3] = robot_pose.pose.position.z
-                    rotation = R.from_quat([robot_pose.pose.orientation.x, robot_pose.pose.orientation.y,
-                                            robot_pose.pose.orientation.z, robot_pose.pose.orientation.w])
-                    R_mat = rotation.as_matrix()
-                    self.T_final[0:3, 0:3] = R_mat
-                    self.info("Landing...")
-                    self.landing_traj(3)
-                    self.has_final = True
+                    # Difference between current and intial poses
+                    T_diff = np.linalg.inv(self.T_init) @ self.T_curr
+                    # Check if the difference is small enough to consider the current pose as the final pose for landing
+                    if np.linalg.norm(T_diff[0:3, 3]) < 0.01:  # Threshold of 0.05 meters
+                        self.T_final = self.T_curr.copy()
+                        self.info("Landing...")
+                        self.has_final = True
+
+                        # self.T_final = np.eye(4)
+                        # self.T_final[0, 3] = robot_pose.pose.position.x
+                        # self.T_final[1, 3] = robot_pose.pose.position.y
+                        # self.T_final[2, 3] = robot_pose.pose.position.z
+                        # rotation = R.from_quat([robot_pose.pose.orientation.x, robot_pose.pose.orientation.y,
+                        #                         robot_pose.pose.orientation.z, robot_pose.pose.orientation.w])
+                        # R_mat = rotation.as_matrix()
+                        # self.T_final[0:3, 0:3] = R_mat
+                        # self.info("Landing...")
+                        # self.landing_traj(3)
+                        # self.has_final = True
+
+                    else:
+                        self.send_position(np.array([self.T_init[0, 3], self.T_init[1, 3], self.T_init[2, 3] + self.hover_height]))
 
     def takeoff(self):
         ''' Take-off procedure to reach the hover height. '''
@@ -302,6 +361,20 @@ class FollowUnicycle(Node):
             self.takeoff_traj(4)
             self.has_initial_pose = True
             self.info(f'Received initial pose from topic: {self.T_init[:3, 3]}')
+
+    def _get_desired_position(self, set_point: np.ndarray) -> np.ndarray:
+        ''' Compute the desired position based on the current, final, and initial poses. '''
+        # Relative transformation from current to final pose
+        T_rel = np.linalg.inv(self.T_init) @ self.T_curr
+
+        T_set_point = np.eye(4)
+        T_set_point[0:3, 0:3] = T_rel[0:3, 0:3]
+        T_set_point[0:3, 3]   = set_point
+
+        # Desired position in the world frame
+        T_des = self.T_init @ T_set_point
+        r_des = T_des[0:3, 3] 
+        return r_des
 
 
 def main():
