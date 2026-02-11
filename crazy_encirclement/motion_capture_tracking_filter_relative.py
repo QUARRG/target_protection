@@ -23,7 +23,7 @@ class MocapRelative(Node):
         }
             
         # QoS Profile
-        poses_qos_deadline = self.update_hz  # Hz
+        poses_qos_deadline = 100  # Hz
         qos_profile = QoSProfile(
             history=QoSHistoryPolicy.KEEP_LAST,
             depth=1,

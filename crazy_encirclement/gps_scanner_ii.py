@@ -18,11 +18,11 @@ class GPSScannerNodeII(Node):
         self.robot = self.get_parameter('robot').get_parameter_value().string_value
         self.update_hz = self.get_parameter('update_hz').get_parameter_value().double_value
 
+        poses_qos_deadline = 100.0  # Hz
         qos_profile = QoSProfile(reliability =QoSReliabilityPolicy.BEST_EFFORT,
-            history=QoSHistoryPolicy.KEEP_LAST,
-            depth=1,
-            deadline=Duration(seconds=0, nanoseconds=0))
-
+                history=QoSHistoryPolicy.KEEP_LAST,
+                depth=1,
+                deadline = Duration(seconds=0, nanoseconds=1e9/100.0))
         self.create_subscription(
             NamedPoseArray, "/poses",
             self._callback, qos_profile
@@ -61,6 +61,7 @@ class GPSScannerNodeII(Node):
         # self.get_logger().debug(f'Received NamedPoseArray with {len(msg.poses)} poses at time {msg.header.stamp.sec}.{msg.header.stamp.nanosec}')
         
         # Getting ego pose
+        T_ego = np.eye(4)
         for pose in msg.poses:
             if pose.name == self.robot:
                 # Capture initial pose on first callback
@@ -92,7 +93,6 @@ class GPSScannerNodeII(Node):
                     self.initial_pose_pub.publish(initial_pose_msg)
 
                 # Compute relative ego pose to initial pose using SE(3) operations
-                T_ego = np.eye(4)
                 T_ego[0:3, 0:3] = R.from_quat([pose.pose.orientation.x, pose.pose.orientation.y,
                                                pose.pose.orientation.z, pose.pose.orientation.w]).as_matrix()
                 T_ego[0, 3] = pose.pose.position.x
@@ -130,7 +130,7 @@ class GPSScannerNodeII(Node):
 
                 # Compute the relative position of the other robot with respect to ego using SE(3) operations
                 T_robot_rel = np.linalg.inv(self.T_init) @ T_robot
-                # T_ego_rel   = np.linalg.inv(self.T_init) @ T_ego
+                T_ego_rel   = np.linalg.inv(self.T_init) @ T_ego
                 T_rel       = np.linalg.inv(T_ego_rel) @ T_robot_rel
 
                 # Extract relative pose

@@ -100,13 +100,11 @@ class FollowUnicycle(Node):
             10)
         
         # Subscribe to motion capture poses
-        poses_qos_deadline = self.predict_hz  # example Hz
-        qos_profile = QoSProfile(
-            history=QoSHistoryPolicy.KEEP_LAST,
-            depth=1,
-            reliability=QoSReliabilityPolicy.BEST_EFFORT,
-            deadline=Duration(nanoseconds=int(1e9 / poses_qos_deadline))
-        )
+        poses_qos_deadline = 100  # Hz
+        qos_profile = QoSProfile(reliability =QoSReliabilityPolicy.BEST_EFFORT,
+                history=QoSHistoryPolicy.KEEP_LAST,
+                depth=1,
+                deadline = Duration(seconds=0, nanoseconds=1e9/100.0))
         self.create_subscription(
             NamedPoseArray, "poses",
             self._poses_changed, qos_profile
@@ -140,6 +138,7 @@ class FollowUnicycle(Node):
             for cf in self.allcfs.crazyflies:
                 cf.arm(True)
                 self.timeHelper.sleep(1.0)
+                self.info(f'arming drone{cf}')
 
         # self.timeHelper.sleep(2.0)
         # input("Press Enter to takeoff")
@@ -234,7 +233,7 @@ class FollowUnicycle(Node):
         self.r_takeoff = np.zeros((3, len(self.t_takeoff))) 
         self.r_takeoff[0,:] = self.T_init[0, 3] * np.ones(len(self.t_takeoff))
         self.r_takeoff[1,:] = self.T_init[1, 3] * np.ones(len(self.t_takeoff))
-        self.r_takeoff[2,:] = self.hover_height * (self.t_takeoff / t_max)
+        self.r_takeoff[2,:] = (self.T_init[2, 3] + self.hover_height) * (self.t_takeoff / t_max)
 
     def landing_traj(self, t_max: float):
         ''' Landing trajectory generation. '''
@@ -260,7 +259,7 @@ class FollowUnicycle(Node):
         # msg.x = self.initial_pose[0]
         # msg.y = self.initial_pose[1]
         # msg.z = self.hover_height
-        self.send_position(np.array([self.initial_pose[0],self.initial_pose[1],self.hover_height]))
+        self.send_position(np.array([self.T_init[0, 3], self.T_init[1, 3], self.hover_height]))
         # self.position_pub.publish(msg)
 
     def landing(self):

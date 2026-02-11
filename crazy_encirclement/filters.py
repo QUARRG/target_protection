@@ -614,31 +614,31 @@ class Baseline3DFilter(BaseFilter):
         self.pub_gain   = self.node.create_publisher(Float32, f'/{self.name}/baseline/controller_gain', 10)
         self.pub_pose   = self.node.create_publisher(PoseWithCovarianceStamped, f'/{self.name}/baseline/pose', 10)
         self.pub_phase  = self.node.create_publisher(Float32, f'/{self.name}/baseline/phase', 10)
-        self.pub_phase_xz  = self.node.create_publisher(Float32, f'/{self.name}/baseline/phase_xz', 10)
+        self.pub_phase_normal  = self.node.create_publisher(Float32, f'/{self.name}/baseline/phase_normal', 10)
         self.pub_radius = self.node.create_publisher(Float32, f'/{self.name}/baseline/radius', 10)
         self.node.info(f'Baseline filter for agent {self.name} initialized.')
     
-    def predict(self, current_pose: np.ndarray, current_vel: np.ndarray, phases_xy: list[float], phases_xz: list[float]):
-        prev_leader_phase_xy, prev_ego_phase_xy, prev_follower_phase_xy = phases_xy
-        prev_leader_phase_xz, prev_ego_phase_xz, prev_follower_phase_xz = phases_xz
-        Re = build_Re(self.embedding_fn, prev_ego_phase_xy)
-        Rc = build_Rc(prev_ego_phase_xy)
+    def predict(self, current_pose: np.ndarray, current_vel: np.ndarray, phases: list[float], phases_normal: list[float]):
+        prev_leader_phase, prev_ego_phase, prev_follower_phase = phases
+        prev_leader_phase_normal, prev_ego_phase_normal, prev_follower_phase_normal = phases_normal
+        Re = build_Re(self.embedding_fn, prev_ego_phase)
+        Rc = build_Rc(prev_ego_phase)
         p = Rc.T @ Re.T @ current_pose
         self.radius  = np.sqrt(p[0]**2 + p[1]**2 + p[2]**2)
         if np.linalg.norm(current_vel) > 0.01 and np.linalg.norm(current_pose) != 0:
             self.normal = np.cross(current_vel, current_pose)/np.linalg.norm(np.cross(current_vel, current_pose))
         pose = self.Re.T @ current_pose
-        current_ego_phase_xy = wrap_to_2pi(np.arctan2(pose[1], pose[0]))
-        current_ego_phase_xz = wrap_to_2pi(np.arctan2(pose[2], pose[0]))
+        current_ego_phase = wrap_to_2pi(np.arctan2(pose[1], pose[0]))
+        current_ego_phase_normal = wrap_to_2pi(np.arctan2(pose[2], pose[0]))
         # Rc = build_Rc(current_ego_phase)
         # curr_ego_phase = np.arctan2(p[1], p[0])
 
-        omega_z, gain_z = phase_controller(current_ego_phase_xy, prev_leader_phase_xy, prev_follower_phase_xy, self.omega_nominal, self.k_phi)
-        omega_y, gain_y = phase_controller(current_ego_phase_xz, prev_leader_phase_xz, prev_follower_phase_xz, self.omega_nominal/10, self.k_phi)
+        omega_z, gain_z = phase_controller(current_ego_phase, prev_leader_phase, prev_follower_phase, self.omega_nominal, self.k_phi)
+        omega_y, gain_y = phase_controller(current_ego_phase_normal, prev_leader_phase_normal, prev_follower_phase_normal, self.omega_nominal/10, self.k_phi)
         # Update phase
-        des_ego_pose_2D = np.array([self.radius_nominal*np.cos(current_ego_phase_xy),self.radius_nominal*np.sin(current_ego_phase_xy), 0])
+        des_ego_pose_2D = np.array([self.radius_nominal*np.cos(current_ego_phase),self.radius_nominal*np.sin(current_ego_phase), 0])
         desired_ego_pose = exp_SO3(np.asarray([0., 0., omega_z *0.6])) @ des_ego_pose_2D
-        desired_ego_phase = wrap_to_2pi(np.arctan2(desired_ego_pose[1], desired_ego_pose[0]))
+        # desired_ego_phase = wrap_to_2pi(np.arctan2(desired_ego_pose[1], desired_ego_pose[0]))
         self.Re = exp_SO3(np.asarray([0., omega_y *0.6, 0.])) @ self.Re
         desired_ego_pose_3D = self.Re@desired_ego_pose
         
@@ -646,6 +646,8 @@ class Baseline3DFilter(BaseFilter):
         current_pose_msg, desired_pose_msg, phase_msg, radius_msg = self.build_pose_phase_msgs()
         phase_msg_test = Float32()
         phase_msg_test.data = current_ego_phase
+        phase_msg_normal = Float32()
+        phase_msg_normal.data = current_ego_phase_normal
         # Building desired pose message with nominal radius
         desired_pose_msg = PoseStamped()
         desired_pose_msg.header.frame_id = self.frame_id
@@ -656,6 +658,7 @@ class Baseline3DFilter(BaseFilter):
         radius_msg.data = self.radius
         self.pub_pose.publish(current_pose_msg)
         self.pub_phase.publish(phase_msg_test)
+        self.pub_phase_normal.publish(phase_msg_normal)
         self.pub_radius.publish(radius_msg)
 
         omega_msg = Float32()
@@ -666,4 +669,4 @@ class Baseline3DFilter(BaseFilter):
         gain_msg.data = gain
         self.pub_gain.publish(gain_msg)
 
-        return phase_msg_test, desired_pose_msg
+        return phase_msg_test, phase_msg_normal, desired_pose_msg

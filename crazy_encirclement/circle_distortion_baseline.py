@@ -66,6 +66,8 @@ class CircleDistortion(Node):
         self.has_order = False
         self.has_phase_follower = False
         self.has_phase_leader = False
+        self.has_phase_follower_normal = False
+        self.has_phase_leader_normal = False
 
         self.final_pose   = np.zeros(3)
         self.current_pose = np.zeros(3)
@@ -80,6 +82,7 @@ class CircleDistortion(Node):
         self.i_takeoff = 0
 
         self.phases = np.zeros(self.n_agents)
+        self.phases_normal = np.zeros(self.n_agents)
 
         self.state = 0
         # 0-take-off, 1-hover, 2-encirclement, 3-landing
@@ -136,14 +139,16 @@ class CircleDistortion(Node):
         # Create subscribers for the other agents' filtered phases
         self.create_subscription(Float32, f'/{self.leader}/baseline/phase',   self._phase_callback_leader, 1)
         self.create_subscription(Float32, f'/{self.follower}/baseline/phase', self._phase_callback_follower, 1)
-
+        self.create_subscription(Float32, f'/{self.leader}/baseline/phase_normal',   self._phase_callback_leader_normal, 1)
+        self.create_subscription(Float32, f'/{self.follower}/baseline/phase_normal', self._phase_callback_follower_normal, 1)
         # Crazyflie position command publisher
         self.position_pub = self.create_publisher(Position, f'/{self.robot}/cmd_position', 10)
 
         # Publishers for phase differences
         self.publish_phase_diff_leader   = self.create_publisher(Float32, f'/{self.robot}/baseline/phase_diff/leader', 10)
         self.publish_phase_diff_follower = self.create_publisher(Float32, f'/{self.robot}/baseline/phase_diff/follower', 10)
-
+        self.publish_phase_diff_normal_leader   = self.create_publisher(Float32, f'/{self.robot}/baseline/phase_diff/normal_leader', 10)
+        self.publish_phase_diff_normal_follower = self.create_publisher(Float32, f'/{self.robot}/baseline/phase_diff/normal_follower', 10)
 
         # Metadata publisher
         self.metadata_pub = self.create_publisher(Metadata, f'/{self.robot}/metadata', 10)
@@ -171,13 +176,14 @@ class CircleDistortion(Node):
             
             # Encirclement state
             elif self.state == 2: 
-                if self.has_phase_follower and self.has_phase_leader:                  
+                if self.has_phase_follower and self.has_phase_leader and self.has_phase_follower_normal and self.has_phase_leader_normal:                  
                     # Propagating the system
                     current_pose = self.current_pose.copy()
                     current_pose[2] -= self.hover_height  # Remove height offset
-                    phase, position = self.baseline.predict(current_pose, self.phases)
+                    phase, phase_normal, position = self.baseline.predict(current_pose, self.phases, self.phases_normal)
                     # Updating internal parameters
                     self.phases[1] = phase.data
+                    self.phases_normal[1] = phase_normal.data
                     self.publish_phase_differences()
 
                     # Sending position command
@@ -260,6 +266,18 @@ class CircleDistortion(Node):
         if msg.data:
             self.phases[2] = msg.data
 
+    def _phase_callback_leader_normal(self, msg: Float32):
+        ''' Callback to receive the filtered phase of the leader agent. '''
+        self.has_phase_leader_normal = True
+        if msg.data:
+            self.phases_normal[0] = msg.data
+
+    def _phase_callback_follower_normal(self, msg: Float32):
+        ''' Callback to receive the filtered phase of the follower agent. '''
+        self.has_phase_follower_normal = True
+        if msg.data:
+            self.phases_normal[2] = msg.data
+
     def _order_callback(self, msg: StringArray):
         ''' Callback to receive the order of agents. '''
         if not self.has_order:
@@ -286,6 +304,10 @@ class CircleDistortion(Node):
         diff_follower = wrap_to_pi(self.phases[1] - self.phases[2])
         self.publish_phase_diff_leader.publish(Float32(data=diff_leader))
         self.publish_phase_diff_follower.publish(Float32(data=diff_follower))
+        diff_leader_normal = wrap_to_pi(self.phases_normal[0] - self.phases_normal[1])
+        diff_follower_normal = wrap_to_pi(self.phases_normal[1] - self.phases_normal[2])
+        self.publish_phase_diff_leader_normal.publish(Float32(data=diff_leader_normal))
+        self.publish_phase_diff_follower_normal.publish(Float32(data=diff_follower_normal))
 
     def takeoff(self):
         ''' Take-off procedure to reach the hover height. '''

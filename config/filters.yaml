@@ -13,7 +13,7 @@ FilterGPS:
   hover_height: 0.3  # meters
   radius_nominal: 0.7  # meters
   omega_nominal: 0.4  # radians per second
-  k_phi: 10.0
+  k_phi: 1.0
 
 FilterRelative:
   # Kalman filter parameters
