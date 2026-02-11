@@ -262,11 +262,11 @@ class FollowUnicycle(Node):
 
                 # Set final pose when landing is commanded
                 elif (self.has_final == False) and (self.land_flag == True):
-                    # Difference between current and intial poses
-                    # T_diff = np.linalg.inv(self.T_init) @ self.T_curr
-                    t_diff = np.linalg.norm(self.T_init[0:3, 3]- self.T_curr[0:3, 3])
+                    # Difference between current and initial positions (ignoring orientation)
+                    position_diff = np.linalg.norm(self.T_init[0:3, 3] - self.T_curr[0:3, 3])
+                    self.info(f'Position difference: {position_diff:.3f} m')
 
-                    if t_diff < 0.01:  # Threshold of 0.05 meters
+                    if position_diff < 0.10:  # Threshold of 0.1 meters
                         self.T_final = self.T_curr.copy()
                         self.info("Landing...")
                         self.landing_traj(3)
