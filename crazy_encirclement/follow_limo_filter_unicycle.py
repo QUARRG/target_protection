@@ -266,7 +266,7 @@ class FollowUnicycle(Node):
         # msg.x = self.initial_pose[0]
         # msg.y = self.initial_pose[1]
         # msg.z = self.hover_height
-        self.send_position(np.array([self.T_init[0, 3], self.T_init[1, 3], self.hover_height]))
+        self.send_position(np.array([self.T_init[0, 3], self.T_init[1, 3], self.T_init[2, 3] + self.hover_height]))
         # self.position_pub.publish(msg)
 
     def landing(self):
