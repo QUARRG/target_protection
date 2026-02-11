@@ -233,9 +233,12 @@ class FollowUnicycle(Node):
                 self.LIMO_pose = pose
 
         # Update filter with new measurement
-        if self.LIMO_pose is not None:
+        if self.LIMO_pose is not None and self.state == 2:
             measurement = np.array([self.LIMO_pose.pose.position.x, self.LIMO_pose.pose.position.y, self.LIMO_pose.pose.position.z])
-            self.filter.update(measurement)
+
+            # Current pose in the initial frame
+            T_curr_robot = np.linalg.inv(self.T_init) @ self.T_curr
+            self.filter.update(measurement, T_curr_robot[0:3, 0:3], T_curr_robot[0:3, 3])
 
     def _poses_changed(self, msg):
         """ Topic update callback to the motion capture lib's
@@ -260,11 +263,13 @@ class FollowUnicycle(Node):
                 # Set final pose when landing is commanded
                 elif (self.has_final == False) and (self.land_flag == True):
                     # Difference between current and intial poses
-                    T_diff = np.linalg.inv(self.T_init) @ self.T_curr
-                    # Check if the difference is small enough to consider the current pose as the final pose for landing
-                    if np.linalg.norm(T_diff[0:3, 3]) < 0.01:  # Threshold of 0.05 meters
+                    # T_diff = np.linalg.inv(self.T_init) @ self.T_curr
+                    t_diff = np.linalg.norm(self.T_init[0:3, 3]- self.T_curr[0:3, 3])
+
+                    if t_diff < 0.01:  # Threshold of 0.05 meters
                         self.T_final = self.T_curr.copy()
                         self.info("Landing...")
+                        self.landing_traj(3)
                         self.has_final = True
 
                         # self.T_final = np.eye(4)
@@ -351,7 +356,7 @@ class FollowUnicycle(Node):
         if not self.has_initial_pose:
             # Filling transformation matrix T_init with initial pose
             self.T_init = np.eye(4)
-            self.T_init[0, 3] = msg.pose.position.x 
+            self.T_init[0, 3] = msg.pose.position.x
             self.T_init[1, 3] = msg.pose.position.y
             self.T_init[2, 3] = msg.pose.position.z
             rotation = R.from_quat([msg.pose.orientation.x, msg.pose.orientation.y,
