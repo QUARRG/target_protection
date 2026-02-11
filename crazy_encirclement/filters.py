@@ -472,11 +472,36 @@ class FilterUnicycle:
         # Kinematic Parameters
         self.linear_speed: float = float(self.params.get('linear_speed_guess', 0.0))
         self.angular_speed: float = float(self.params.get('angular_speed_guess', 0.0))
+        self.zupt_threshold: float = float(self.params.get('zupt_threshold', 0.05))
 
         self.I = np.eye(self.dim_state)
 
     def predict(self, dt: float) -> dict:
         ''' Propagates the state and covariance forward in time. '''
+
+        # --- ZUPT LOGIC START ---
+        is_stopped = abs(self.linear_speed) < self.zupt_threshold
+
+        if is_stopped:
+            # STRATEGY A: FREEZE
+            # 1. Force velocity to zero (stop "coasting")
+            self.linear_speed = 0.0
+            
+            # 2. Assume angular velocity is zero (stop "spinning")
+            # Even if it IS spinning, we can't see it, so assuming 0 is safer for stability.
+            self.angular_speed = 0.0
+
+            # 3. Zero the process noise for kinematic states
+            # This tells the filter: "I am 100% sure the state isn't changing."
+            # We keep position noise tiny just to allow slight GPS corrections.
+            current_Q = np.zeros_like(self.Q)
+            current_Q[0,0] = 1e-6 # x
+            current_Q[1,1] = 1e-6 # y
+            current_Q[5,5] = 1e-6 # z_ground
+            # theta, omega, v noise are all 0.0
+        else:
+            current_Q = self.Q
+        # --- ZUPT LOGIC END ---
         
         # 1. State Propagation
         # Rotation: R_next = R * Exp(omega * dt)
@@ -506,7 +531,7 @@ class FilterUnicycle:
 
         # 3. Covariance Propagation
         F = self.I + A * dt
-        self.P = F @ self.P @ F.T + self.Q
+        self.P = F @ self.P @ F.T + current_Q
         
         return self.get_state()
 
