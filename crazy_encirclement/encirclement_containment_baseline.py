@@ -191,7 +191,7 @@ class CircleDistortion(Node):
                     self.info("Lost phase information, returning to hover.")
             
             # Landing state
-            elif self.state == 3:
+            elif self.state == 4:
                 self.landing()
                 if self.i_landing < len(self.t_landing)-1:
                     self.i_landing += 1
@@ -246,7 +246,7 @@ class CircleDistortion(Node):
             self.final_pose[2] = robot_pose.pose.position.z
             self.landing_traj(3)
             self.has_final = True
-            self.state = 3
+            self.state = 4
 
     def _phase_callback_leader(self, msg: Float32):
         ''' Callback to receive the filtered phase of the leader agent. '''
@@ -262,20 +262,19 @@ class CircleDistortion(Node):
 
     def _order_callback(self, msg: StringArray):
         ''' Callback to receive the order of agents. '''
-        if not self.has_order:
-            # self.info(f"Phase received: {msg.data}")
-            order = msg.data
-            for robot in order:
-                if robot == self.robot:
-                    i = order.index(robot)
-                    if i == 0:
-                        self.leader = order[self.n_agents-1]
-                        self.follower = order[i+1]
-                    elif i == (self.n_agents-1):
-                        self.leader = order[i-1]
-                        self.follower = order[0]
-                    else:
-                        self.leader = order[i-1]
+        # self.info(f"Phase received: {msg.data}")
+        order = msg.data
+        for robot in order:
+            if robot == self.robot:
+                i = order.index(robot)
+                if i == 0:
+                    self.leader = order[self.n_agents-1]
+                    self.follower = order[i+1]
+                elif i == (self.n_agents-1):
+                    self.leader = order[i-1]
+                    self.follower = order[0]
+                else:
+                    self.leader = order[i-1]
                         self.follower = order[i+1]
             self.has_order = True
             # self.info(f"Leader: {self.leader}, Follower: {self.follower}")

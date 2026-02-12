@@ -265,27 +265,32 @@ class FollowUnicycle(Node):
                     # Difference between current and initial positions (ignoring orientation)
                     position_diff = np.linalg.norm(self.T_init[0:3, 3] - self.T_curr[0:3, 3])
                     self.info(f'Position difference: {position_diff:.3f} m')
+                    self.T_final = self.T_curr.copy()
+                    self.T_final[0:3, 3] = np.array([0.5, 0.5, 0.0])
+                    self.info("Landing...")
+                    self.landing_traj(3)
+                    self.has_final = True
 
-                    if position_diff < 0.10:  # Threshold of 0.1 meters
-                        self.T_final = self.T_curr.copy()
-                        self.info("Landing...")
-                        self.landing_traj(3)
-                        self.has_final = True
+                    # if position_diff < 0.10:  # Threshold of 0.1 meters
+                    #     self.T_final = self.T_curr.copy()
+                    #     self.info("Landing...")
+                    #     self.landing_traj(3)
+                    #     self.has_final = True
 
-                        # self.T_final = np.eye(4)
-                        # self.T_final[0, 3] = robot_pose.pose.position.x
-                        # self.T_final[1, 3] = robot_pose.pose.position.y
-                        # self.T_final[2, 3] = robot_pose.pose.position.z
-                        # rotation = R.from_quat([robot_pose.pose.orientation.x, robot_pose.pose.orientation.y,
-                        #                         robot_pose.pose.orientation.z, robot_pose.pose.orientation.w])
-                        # R_mat = rotation.as_matrix()
-                        # self.T_final[0:3, 0:3] = R_mat
-                        # self.info("Landing...")
-                        # self.landing_traj(3)
-                        # self.has_final = True
+                    #     # self.T_final = np.eye(4)
+                    #     # self.T_final[0, 3] = robot_pose.pose.position.x
+                    #     # self.T_final[1, 3] = robot_pose.pose.position.y
+                    #     # self.T_final[2, 3] = robot_pose.pose.position.z
+                    #     # rotation = R.from_quat([robot_pose.pose.orientation.x, robot_pose.pose.orientation.y,
+                    #     #                         robot_pose.pose.orientation.z, robot_pose.pose.orientation.w])
+                    #     # R_mat = rotation.as_matrix()
+                    #     # self.T_final[0:3, 0:3] = R_mat
+                    #     # self.info("Landing...")
+                    #     # self.landing_traj(3)
+                    #     # self.has_final = True
 
-                    else:
-                        self.send_position(np.array([self.T_init[0, 3], self.T_init[1, 3], self.T_init[2, 3] + self.hover_height]))
+                    # else:
+                    #     self.send_position(np.array([self.T_init[0, 3], self.T_init[1, 3], self.T_init[2, 3] + self.hover_height]))
 
     def takeoff(self):
         ''' Take-off procedure to reach the hover height. '''

@@ -662,7 +662,6 @@ class Baseline3DFilter(BaseFilter):
         self.s: float = np.log(self.radius)
         self.Rc: np.ndarray = build_Rc(wrap_to_2pi(self.params.get('phase_guess', 0.0)))
         self.Re = R.from_euler('y',index*2*np.pi/3).as_matrix()
-        self.node.info(f'Reeeeeeeeeeeeeeeeeeeeeeee {self.Re}, index {index}')
         self.normal = self.Re@np.array([0., 0., 1.])
         self.dt : float = self.params.get('dt', 0.1)
         self.e_x: np.ndarray = np.asarray([[1.], [0.], [0.]])
