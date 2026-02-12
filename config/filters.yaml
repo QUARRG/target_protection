@@ -45,4 +45,5 @@ FilterUnicycle:
   # Other parameters
   frame_id: world
   hover_height: 0.3  # meters
+  zupt_threshold: 0.05 # m/s
   k_phi: 10.0
