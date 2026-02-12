@@ -4,7 +4,7 @@ from typing import Callable
 from std_msgs.msg import Float32, Float32MultiArray
 from geometry_msgs.msg import PoseStamped, Point, Quaternion, PoseWithCovarianceStamped
 from scipy.linalg import expm
-
+from scipy.spatial.transform import Rotation as R
 
 # ----------------------------------------------------------------------
 # Embedding Functions
@@ -137,7 +137,7 @@ def phase_controller(phase_ego, phase_leader, phase_follower, omega_nominal, k_p
     eps = 1e-6  # small constant to avoid division by zero
     gain =  k_p * (1/(error_ahead + eps) + 1/(error_behind + eps))
     control_signal = omega_nominal + gain
-    control_signal = np.clip(control_signal, -2*omega_nominal,2*omega_nominal)
+    # control_signal = np.clip(control_signal, -2*omega_nominal,2*omega_nominal)
 
     return control_signal, gain
 
@@ -616,7 +616,7 @@ class FilterUnicycle:
 class Baseline3DFilter(BaseFilter):
     ''' Baseline filter without state estimation for encirclement tasks.
     '''
-    def __init__(self, name: str, embedding_fn_name: str, params: dict, node: Node):
+    def __init__(self, index, name: str, embedding_fn_name: str, params: dict, node: Node):
         self.name = name
         self.embedding_fn_name = embedding_fn_name
         self.params = params
@@ -636,7 +636,8 @@ class Baseline3DFilter(BaseFilter):
 
         self.s: float = np.log(self.radius)
         self.Rc: np.ndarray = build_Rc(wrap_to_2pi(self.params.get('phase_guess', 0.0)))
-        self.Re = np.eye(3)
+        self.Re = R.from_euler('y',index*2*np.pi/3).as_matrix()
+        self.node.info(f'Reeeeeeeeeeeeeeeeeeeeeeee {self.Re}, index {index}')
         self.normal = self.Re@np.array([0., 0., 1.])
         self.dt : float = self.params.get('dt', 0.1)
         self.e_x: np.ndarray = np.asarray([[1.], [0.], [0.]])
@@ -660,8 +661,8 @@ class Baseline3DFilter(BaseFilter):
         if np.linalg.norm(current_vel) > 0.05 and np.linalg.norm(current_pose) != 0:
             self.normal = np.cross(current_vel, current_pose)/np.linalg.norm(np.cross(current_vel, current_pose))
         else:
-            self.normal = np.array([0,0,1])
-        pose = self.Re.T @ current_pose
+            self.normal = np.array([0,0,1])      
+        pose = Re.T @ current_pose
         current_ego_phase = wrap_to_2pi(np.arctan2(pose[1], pose[0]))
         current_ego_phase_normal = wrap_to_2pi(np.arctan2(self.normal[2],self.normal[0]))
         # Rc = build_Rc(current_ego_phase)
@@ -669,13 +670,14 @@ class Baseline3DFilter(BaseFilter):
 
         omega_z, gain_z = phase_controller(current_ego_phase, prev_leader_phase, prev_follower_phase, self.omega_nominal, self.k_phi)
         omega_y, gain_z = phase_controller(current_ego_phase_normal, prev_leader_phase_normal, prev_follower_phase_normal, self.omega_nominal/10, self.k_phi)
-        self.node.info(f"omega z {omega_z} omega_y {omega_y}")
+        omega_y = 0
         # Update phase
         des_ego_pose_2D = np.array([self.radius_nominal*np.cos(current_ego_phase),self.radius_nominal*np.sin(current_ego_phase), 0])
         desired_ego_pose = exp_SO3(np.asarray([0., 0., omega_z *0.6])) @ des_ego_pose_2D
+        Re = build_Re(self.embedding_fn, current_ego_phase)
         # desired_ego_phase = wrap_to_2pi(np.arctan2(desired_ego_pose[1], desired_ego_pose[0]))
-        self.Re = exp_SO3(np.asarray([0., omega_y*0.6, 0.])) @ self.Re
-        desired_ego_pose_3D = self.Re@desired_ego_pose
+        # self.Re = exp_SO3(np.asarray([0., omega_y*0.6, 0.])) @ self.Re
+        desired_ego_pose_3D = Re@desired_ego_pose
         
         # Publish predicted pose, phase and controller gain
         current_pose_msg, desired_pose_msg, phase_msg, radius_msg = self.build_pose_phase_msgs()

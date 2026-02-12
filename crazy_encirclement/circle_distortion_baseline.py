@@ -10,16 +10,18 @@ from std_msgs.msg import Float32
 from crazy_encirclement.filters import Baseline3DFilter, wrap_to_2pi, wrap_to_pi
 from crazy_encirclement_interfaces.msg import Metadata
 from nav_msgs.msg import Odometry
+from crazyflie_py import Crazyswarm
 
 
 class CircleDistortion(Node):
-    def __init__(self):
+    def __init__(self,swarm=None):
         """
             Node that sends the crazyflie to a desired position
             The desired position comes from the distortion of a circle
         """
         super().__init__('circle_distortion')
         self.info = self.get_logger().info
+        self.swarm = swarm
         self.info('Circle distortion node has been started.')
 
         # Parameters
@@ -84,7 +86,7 @@ class CircleDistortion(Node):
         self.i_takeoff = 0
 
         self.phases = np.zeros(self.n_agents)
-        self.phases_normals = np.zeros(self.n_agents)
+        self.phases_normals = np.pi/2*np.ones(self.n_agents)
 
         self.state = 0
         # 0-take-off, 1-hover, 2-encirclement, 3-landing
@@ -140,7 +142,12 @@ class CircleDistortion(Node):
             'frame_id': self.frame_id,
             'dt': self.timer_period
         }
-        self.baseline = Baseline3DFilter(self.robot, self.embedding_fn_name, self.params, self)
+        index = 1
+        for i in range(len(self.order)):
+            if self.order[i] == self.robot:
+                index = i +1
+        
+        self.baseline = Baseline3DFilter(index, self.robot, self.embedding_fn_name, self.params, self)
 
         # Create subscribers for the other agents' filtered phases
         self.create_subscription(Float32, f'/{self.leader}/baseline/phase',   self._phase_callback_leader, 1)
@@ -159,7 +166,14 @@ class CircleDistortion(Node):
         # Metadata publisher
         self.metadata_pub = self.create_publisher(Metadata, f'/{self.robot}/metadata', 10)
         self.metadata_timer = self.create_timer(10.0, self.publish_metadata)
-        
+        if swarm:
+            self.timeHelper = self.swarm.timeHelper
+            self.allcfs = self.swarm.allcfs
+
+            # arm (one by one)
+            for cf in self.allcfs.crazyflies:
+                cf.arm(True)
+                self.timeHelper.sleep(1.0)
         # input("Press Enter to takeoff")
         self.timer = self.create_timer(self.timer_period, self.timer_callback)
 
@@ -297,6 +311,7 @@ class CircleDistortion(Node):
         if not self.has_order:
             # self.info(f"Phase received: {msg.data}")
             order = msg.data
+            self.order = msg.data
             for robot in order:
                 if robot == self.robot:
                     i = order.index(robot)
@@ -413,8 +428,10 @@ class CircleDistortion(Node):
 
 
 def main():
-    rclpy.init()
-    encirclement = CircleDistortion()
+    swarm = Crazyswarm()
+    if not rclpy.ok():
+        rclpy.init()
+    encirclement = CircleDistortion(swarm)
     rclpy.spin(encirclement)
     encirclement.destroy_node()
     rclpy.shutdown()
