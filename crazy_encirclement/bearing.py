@@ -1,7 +1,8 @@
 import rclpy
 import numpy as np
 from rclpy.node import Node
-from geometry_msgs.msg import Pose, Bool
+from geometry_msgs.msg import Pose
+from std_msgs.msg import Bool
 from motion_capture_tracking_interfaces.msg import NamedPoseArray, NamedPose
 from crazyflie_interfaces.msg import Position
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy, QoSPresetProfiles, ReliabilityPolicy, DurabilityPolicy
@@ -13,10 +14,10 @@ class Bearing(Node):
         super().__init__('bearing_node')
         # Initial parameters
         self.declare_parameter('update_hz', 10.0)
-        self.declare_parameter('relative', 'false')
+        self.declare_parameter('relative', False)
         self.declare_parameter('robot', 'C25')
-        self.relative = self.get_parameter('relative').get_value().bool_value()
-        self.robot = self.get_parameter('robot').get_value().string_value()
+        self.relative = self.get_parameter('relative').get_parameter_value().bool_value
+        self.robot = self.get_parameter('robot').get_parameter_value().string_value
         self.frequency = self.get_parameter('update_hz').get_parameter_value().double_value
         self.has_distances = False
         # self.declare_parameter('evader', 'C26') #the evader position will not be relatve
@@ -54,21 +55,29 @@ class Bearing(Node):
         self.has_distances = True
         self.distances.header = msg.header
         self.distances.poses = []
-        for pose in msg.pose:
+        for pose in msg.poses:
             if pose.name == self.robot:
                 self_pose = pose.pose
                 R_dw = R.from_quat([pose.pose.orientation.x,pose.pose.orientation.y,pose.pose.orientation.z,pose.pose.orientation.w])
                 break
-        for pose in msg.pose:
+        for pose in msg.poses:
             if pose.name != self.robot:
                 relative_dist = NamedPose()
                 relative_dist.name = pose.name
                 relative_dist_arr = np.array([pose.pose.position.x - self_pose.position.x, pose.pose.position.y - self_pose.position.y, pose.pose.position.z - self_pose.position.z])
-                relative_dist_arr = R_dw.inv()*relative_dist_arr #convert relative position to ego frame
+                relative_dist_arr = R_dw.inv().apply(relative_dist_arr) #convert relative position to ego frame
                 relative_dist.pose.position.x = relative_dist_arr[0]
                 relative_dist.pose.position.y = relative_dist_arr[1]
                 relative_dist.pose.position.z = relative_dist_arr[2]
                 self.distances.poses.append(relative_dist)
 
+def main():
+    rclpy.init()
+    bearing = Bearing()
+    rclpy.spin(bearing)
+    bearing.destroy_node()
+    rclpy.shutdown()
 
 
+if __name__ == '__main__':
+    main()

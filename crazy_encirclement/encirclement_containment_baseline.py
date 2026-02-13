@@ -50,7 +50,7 @@ class Encirclement_Containment(Node):
         self.desired_phase_diff = 2.0 * np.pi / self.n_agents
         self.initial_radius = self.radius_nominal
         self.swarm_poses = np.array((3,self.n_agents-1))
-        self.evader_pos = np.array(3)
+        self.evader_pos = np.zeros(3)
         self.R_dw = None
 
         # Filter parameters
@@ -133,7 +133,7 @@ class Encirclement_Containment(Node):
         
         # Subscription to evader detection
         self.create_subscription(
-            Bool, '/evader detection',
+            Bool, '/evader_detection',
             self._evader_detection_callback,
             10) 
         self.publish_estimated_omega_x   = self.create_publisher(Float32, f'/{self.robot}/baseline/measured/omega/x', 10)
@@ -218,7 +218,7 @@ class Encirclement_Containment(Node):
             elif self.state == 3:
                 v = bearing_based_formation_control(self.swarm_poses, self.current_pose, self.evader_pos, 1 ,self.radius_nominal)
                 vel_world = VelocityWorld()
-                v = self.R_dw*v #transforming velocity in drone frame to world frame
+                v = self.R_dw.apply(v) #transforming velocity in drone frame to world frame
                 vel_world.vel.x = v[0]
                 vel_world.vel.y = v[1]
                 vel_world.vel.z = 0
@@ -242,16 +242,17 @@ class Encirclement_Containment(Node):
             self.info('Exiting open loop command node')
 
     def _bearing_callback(self, msg: NamedPoseArray):
-        for pose in msg.poses:
-            if pose.name in self.order and pose.name != self.robot:
-                i = self.order.index(pose.name)
-                self.swarm_poses[0,i] = pose.pose.position.x
-                self.swarm_poses[1,i] = pose.pose.position.y
-                self.swarm_poses[2,i] = pose.pose.position.z
-            elif pose.name == self.evader:
-                self.evader_pos[0] = pose.pose.position.x
-                self.evader_pos[1] = pose.pose.position.y 
-                self.evader_pos[2] = pose.pose.position.z  
+        if self.order:
+            for pose in msg.poses:
+                if pose.name in self.order and pose.name != self.robot:
+                    i = self.order.index(pose.name)
+                    self.swarm_poses[0,i] = pose.pose.position.x
+                    self.swarm_poses[1,i] = pose.pose.position.y
+                    self.swarm_poses[2,i] = pose.pose.position.z
+                elif pose.name == self.evader:
+                    self.evader_pos[0] = pose.pose.position.x
+                    self.evader_pos[1] = pose.pose.position.y 
+                    self.evader_pos[2] = pose.pose.position.z  
             
 
     def _poses_changed(self, robot_pose: PoseStamped):
@@ -432,7 +433,7 @@ class Encirclement_Containment(Node):
 
 def main():
     rclpy.init()
-    encirclement = CircleDistortion()
+    encirclement = Encirclement_Containment()
     rclpy.spin(encirclement)
     encirclement.destroy_node()
     rclpy.shutdown()

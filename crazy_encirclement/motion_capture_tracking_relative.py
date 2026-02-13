@@ -1,7 +1,8 @@
 import rclpy
 import numpy as np
 from rclpy.node import Node
-from geometry_msgs.msg import PoseStamped, Bool
+from geometry_msgs.msg import PoseStamped
+from std_msgs.msg import Bool
 from motion_capture_tracking_interfaces.msg import NamedPoseArray, NamedPose
 from crazyflie_interfaces.msg import Position
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy, QoSPresetProfiles, ReliabilityPolicy, DurabilityPolicy

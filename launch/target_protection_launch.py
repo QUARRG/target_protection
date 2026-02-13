@@ -102,7 +102,9 @@ def parse_yaml(context):
 
     # Listing all enabled robots
     robots_list = [robot for robot in crazyflies['robots'] if crazyflies['robots'][robot]['enabled'] and crazyflies['robots'][robot]['role'] == 'pursuer']
-    evader = [robot for robot in crazyflies['robots'] if crazyflies['robots'][robot]['enabled'] and crazyflies['robots'][robot]['role'] == 'evader']
+    for robot in crazyflies['robots']:
+        if crazyflies['robots'][robot]['enabled'] and crazyflies['robots'][robot]['role'] == 'evader':
+            evader = robot
 
     for robot in robots_list:
         # Nodes for each robot
@@ -129,7 +131,7 @@ def parse_yaml(context):
             executable='bearing',
             name=robot+'_bearing',
             output='screen',
-            parameters=[{'robot': robot, relative: relative}],
+            parameters=[{'robot': robot, 'relative': relative}],
         ))
 
         # Watch dog node for each robot
