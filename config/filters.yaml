@@ -47,3 +47,19 @@ FilterUnicycle:
   hover_height: 0.3  # meters
   zupt_threshold: 0.05 # m/s
   k_phi: 10.0
+
+FilterSpatial:
+  # General parameters
+  predict_hz: 100.0
+  update_hz: 10.0
+  seed: 60
+  # Parameters for 3D circle distortion
+  embedding_fn_name: modelE  # Always modelE for spatial filter
+  frame_id: world
+  hover_height: 1.2  # meters
+  radius_nominal: 0.75  # meters
+  omega_z_nominal: 0.6  # radians per second (planar rotation around z)
+  omega_y_nominal: 0.0  # radians per second (spatial rotation around y)
+  k_phi_z: 1.0  # Gain for planar phase controller
+  k_phi_y: 0.5  # Gain for spatial rotation controller
+  adjoint_angle: 0.0  # Initial guess for y-axis rotation angle
