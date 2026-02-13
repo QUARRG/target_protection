@@ -82,7 +82,7 @@ class CircleDistortion(Node):
         self.phases = np.zeros(self.n_agents)
 
         self.state = 0
-        # 0-take-off, 1-hover, 2-encirclement, 3-landing
+        # 0-take-off, 1-hover, 2-encirclement, 3-navigating to pursuer, 4-landing
 
         # ----------------------------------------------------------------------
         # Subscribers
@@ -112,6 +112,12 @@ class CircleDistortion(Node):
             StringArray, '/agents_order',
             self._order_callback,
             10)    
+        
+        # Subscription to evader detection
+        self.create_subscription(
+            Bool, '/evader detection',
+            self._evader_detection_callback,
+            10) 
         self.publish_estimated_omega_x   = self.create_publisher(Float32, f'/{self.robot}/baseline/measured/omega/x', 10)
         self.publish_estimated_omega_y   = self.create_publisher(Float32, f'/{self.robot}/baseline/measured/omega/y', 10)
         self.publish_estimated_omega_z   = self.create_publisher(Float32, f'/{self.robot}/baseline/measured/omega/z', 10)
@@ -189,6 +195,9 @@ class CircleDistortion(Node):
                 else:
                     self.state = 1  # Return to hover if phases are not available
                     self.info("Lost phase information, returning to hover.")
+            
+            elif self.state == 3:
+                pass
             
             # Landing state
             elif self.state == 4:
@@ -275,10 +284,16 @@ class CircleDistortion(Node):
                     self.follower = order[0]
                 else:
                     self.leader = order[i-1]
-                        self.follower = order[i+1]
+                    self.follower = order[i+1]
             self.has_order = True
             # self.info(f"Leader: {self.leader}, Follower: {self.follower}")
 
+    def _evader_detection_callback(self, msg: Bool):
+        if msg.data == True:
+            self.state == 3
+        else:
+            self.state == 1 #hover
+            
     def publish_phase_differences(self):
         ''' Publish phase differences to leader and follower. '''
         diff_leader = wrap_to_pi(self.phases[0] - self.phases[1])

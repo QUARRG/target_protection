@@ -1,7 +1,7 @@
 import rclpy
 import numpy as np
 from rclpy.node import Node
-from geometry_msgs.msg import PoseStamped, Pose
+from geometry_msgs.msg import PoseStamped, Bool
 from motion_capture_tracking_interfaces.msg import NamedPoseArray, NamedPose
 from crazyflie_interfaces.msg import Position
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy, QoSPresetProfiles, ReliabilityPolicy, DurabilityPolicy
@@ -14,9 +14,10 @@ class MocapRelative(Node):
         # Initial parameters
         self.declare_parameter('update_hz', 200.0)
         self.declare_parameter('reference_object', 'LIMO')
+        self.declare_parameter('evader', 'C26') #the evader position will not be relatve
         self.update_hz = self.get_parameter('update_hz').get_parameter_value().double_value
         self.reference = self.get_parameter('reference_object').get_parameter_value().string_value
-
+        self.evader = self.get_parameter('evader').get_parameter_value().string_value
         # Transformation matrices
         self.R_wc = R.from_quat([0, 0, 0, 1])
         self.R_cw = R.from_quat([0, 0, 0, 1])
@@ -47,6 +48,11 @@ class MocapRelative(Node):
             NamedPoseArray, "/poses",
             self._callback, qos_profile
         )
+        # Subscription to evader detection
+        self.create_subscription(
+            Bool, '/evader_detection',
+            self._evader_detection_callback,
+            10) 
          
         self.ref_pose = PoseStamped()
         self.relative_poses = NamedPoseArray()
@@ -55,24 +61,19 @@ class MocapRelative(Node):
 
     def _callback(self, msg: NamedPoseArray):
         '''Callback function to process incoming NamedPoseArray messages from Vicon and publish noisy GPS positions.'''
-        if msg:
-            self.has_mocap = True
-            self.ref_pose.header = msg.header
-            self.relative_poses.header = msg.header
-            self.relative_poses.poses = []
-            
-            # Getting reference pose
-            for pose in msg.poses:
-                if pose.name == self.reference:
-                    self.ref_pose.pose.position.x = pose.pose.position.x
-                    self.ref_pose.pose.position.y = pose.pose.position.y
-                    self.ref_pose.pose.position.z = pose.pose.position.z
-                    qx = pose.pose.orientation.x
-                    qy = pose.pose.orientation.y
-                    qz = pose.pose.orientation.z
-                    qw = pose.pose.orientation.w
-                    self.R_wc = R.from_quat([qx, qy, qz, qw])  # Car to world
-                    self.R_cw = self.R_wc.inv()                # World to Car
+        if msg:         
+            # # Getting reference pose
+            # for pose in msg.poses:
+            #     if pose.name == self.reference:
+            #         self.ref_pose.pose.position.x = pose.pose.position.x
+            #         self.ref_pose.pose.position.y = pose.pose.position.y
+            #         self.ref_pose.pose.position.z = pose.pose.position.z
+            #         qx = pose.pose.orientation.x
+            #         qy = pose.pose.orientation.y
+            #         qz = pose.pose.orientation.z
+            #         qw = pose.pose.orientation.w
+            #         self.R_wc = R.from_quat([qx, qy, qz, qw])  # Car to world
+            #         self.R_cw = self.R_wc.inv()                # World to Car
             if not self.R_d0w:
                 for pose in msg.poses:
                     R_aux = R.from_quat([pose.pose.orientation.x,pose.pose.orientation.y,pose.pose.orientation.z,pose.pose.orientation.w])
@@ -80,14 +81,12 @@ class MocapRelative(Node):
             else:
                 self.has_mocap = True
                 self.ref_pose.header = msg.header
-                self.scanner.header = msg.header
-            # self.scanner.header.frame_id = self.reference
-                self.scanner.poses = []
+                self.relative_poses.header = msg.header
+                self.relative_poses.poses = []
                 
-                # Getting ego pose
+                # Getting reference pose
                 for pose in msg.poses:
                     if pose.name == self.reference:
-
                         self.ref_pose.pose.position.x = pose.pose.position.x
                         self.ref_pose.pose.position.y = pose.pose.position.y
                         self.ref_pose.pose.position.z = pose.pose.position.z
@@ -97,7 +96,8 @@ class MocapRelative(Node):
                         qw = pose.pose.orientation.w
                         self.R_wc = R.from_quat([qx, qy, qz, qw])
                         self.R_cw = self.R_wc.inv()
-
+                    elif pose.name == self.evader:
+                        self.relative_poses.poses.append(pose)
 
                 # Getting relative poses of other robots with respect to ego
                 for pose in msg.poses:
@@ -118,15 +118,22 @@ class MocapRelative(Node):
                         relative_pose_d.pose.orientation.y = qy
                         relative_pose_d.pose.orientation.z = qz
                         relative_pose_d.pose.orientation.w = qw
-                        self.scanner.poses.append(relative_pose_d)
+                        self.relative_poses.poses.append(relative_pose_d)
             
             # Publish the Vicon position without noise
             # self.vicon_position_pub.publish(self.ref_pose)
+
+    def _evader_detection_callback(self, msg: Bool):
+        if msg.data == True:
+            self.reference = self.evader
+        else:
+            self.reference = 'LIMO'
 
     def _timer_callback(self):
         '''Timer callback to publish the relative poses at the specified rate.'''
         if self.has_mocap:
             self.relative_position_pub.publish(self.relative_poses)
+
 
 
 def main():
