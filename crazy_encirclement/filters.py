@@ -499,9 +499,9 @@ class FilterUnicycle:
             # This tells the filter: "I am 100% sure the state isn't changing."
             # We keep position noise the same to allow GPS corrections.
             current_Q = np.zeros_like(self.Q)
-            current_Q[0,0] = self.Q[0,0] #* 1e-6 # x
-            current_Q[1,1] = self.Q[1,1] #* 1e-6 # y
-            current_Q[5,5] = self.Q[5,5] #* 1e-6 # z_ground
+            current_Q[0,0] = 1e-6 # x
+            current_Q[1,1] = 1e-6 # y
+            current_Q[5,5] = 1e-6 # z_ground
             # theta, omega, v noise are all 0.0
         else:
             current_Q = self.Q
@@ -619,12 +619,29 @@ class FilterUnicycle:
         xi_z = xi[5]         # Ground height correction
 
         # --- Geometric Update X <- X * exp(xi) ---
-        # Position: p = p + R * xi_p
-        self.p = self.p + self.R @ xi_p
+        # Create the Lie algebra element se(2)
+        xi_hat = np.array([
+            [0, -xi_theta, xi_p[0]],
+            [xi_theta, 0, xi_p[1]],
+            [0, 0, 0]
+        ])
         
-        # Heading: R = R * Exp(xi_theta)
-        R_correction = self._rotm(xi_theta)
-        self.R = self.R @ R_correction
+        # Compute matrix exponential
+        exp_xi = expm(xi_hat)
+        
+        # Current state as SE(2) matrix
+        X = np.array([
+            [self.R[0,0], self.R[0,1], self.p[0]],
+            [self.R[1,0], self.R[1,1], self.p[1]],
+            [0, 0, 1]
+        ])
+        
+        # Apply geometric update: X <- X * exp(xi)
+        X_new = X @ exp_xi
+        
+        # Extract updated position and rotation
+        self.p = X_new[0:2, 2]
+        self.R = X_new[0:2, 0:2]
         self.theta = np.arctan2(self.R[1,0], self.R[0,0])
 
         # --- Parameter Update (Additive) ---

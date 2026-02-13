@@ -266,28 +266,28 @@ class FollowUnicycle(Node):
                     position_diff = np.linalg.norm(self.T_init[0:3, 3] - self.T_curr[0:3, 3])
                     self.info(f'Position difference: {position_diff:.3f} m')
                     self.T_final = self.T_curr.copy()
-                    self.T_final[0:3, 3] = np.array([0.5, 0.5, 0.0])
+                    self.T_final[0:3, 3] += np.array([0.25, 0.25, 0.0])
                     self.info("Landing...")
                     self.landing_traj(3)
                     self.has_final = True
 
-                    # if position_diff < 0.10:  # Threshold of 0.1 meters
+                    # if position_diff < self.hover_height * 1.05:  # Threshold of 0.1 meters
                     #     self.T_final = self.T_curr.copy()
                     #     self.info("Landing...")
                     #     self.landing_traj(3)
                     #     self.has_final = True
 
-                    #     # self.T_final = np.eye(4)
-                    #     # self.T_final[0, 3] = robot_pose.pose.position.x
-                    #     # self.T_final[1, 3] = robot_pose.pose.position.y
-                    #     # self.T_final[2, 3] = robot_pose.pose.position.z
-                    #     # rotation = R.from_quat([robot_pose.pose.orientation.x, robot_pose.pose.orientation.y,
-                    #     #                         robot_pose.pose.orientation.z, robot_pose.pose.orientation.w])
-                    #     # R_mat = rotation.as_matrix()
-                    #     # self.T_final[0:3, 0:3] = R_mat
-                    #     # self.info("Landing...")
-                    #     # self.landing_traj(3)
-                    #     # self.has_final = True
+                        # self.T_final = np.eye(4)
+                        # self.T_final[0, 3] = robot_pose.pose.position.x
+                        # self.T_final[1, 3] = robot_pose.pose.position.y
+                        # self.T_final[2, 3] = robot_pose.pose.position.z
+                        # rotation = R.from_quat([robot_pose.pose.orientation.x, robot_pose.pose.orientation.y,
+                        #                         robot_pose.pose.orientation.z, robot_pose.pose.orientation.w])
+                        # R_mat = rotation.as_matrix()
+                        # self.T_final[0:3, 0:3] = R_mat
+                        # self.info("Landing...")
+                        # self.landing_traj(3)
+                        # self.has_final = True
 
                     # else:
                     #     self.send_position(np.array([self.T_init[0, 3], self.T_init[1, 3], self.T_init[2, 3] + self.hover_height]))
@@ -313,7 +313,8 @@ class FollowUnicycle(Node):
 
     def landing_traj(self, t_max: float):
         ''' Landing trajectory generation. '''
-        self.t_landing = np.arange(t_max, 0.1, -self.timer_period)
+        # self.t_landing = np.arange(t_max, 0.1, -self.timer_period)
+        self.t_landing = np.arange(self.T_final[2, 3], self.T_init[2, 3], -0.01)
         self.i_landing = 0
         self.r_landing = np.zeros((3, len(self.t_landing)))
         self.r_landing[0,:] = self.T_final[0, 3] * np.ones(len(self.t_landing))
