@@ -531,11 +531,16 @@ class FilterUnicycle:
         A[1, 2] = self.linear_speed
         A[1, 4] = -1.0
         
+        # Row 2 (theta-error dynamics)
+        A[2, 3] = 1.0  # theta depends on omega
+        
+        # Row 3 (omega-error dynamics) is 0 (random walk model)
+        # Row 4 (v-error dynamics) is 0 (random walk model)
         # Row 5 (z-error dynamics) is 0 because z_ground is static
 
         # 3. Covariance Propagation
         F = self.I + A * dt
-        self.P = F @ self.P @ F.T + current_Q
+        self.P = F @ self.P @ F.T + current_Q * dt
 
         # ---- Publish predicted state ----
         state_msg = FilterUnicycleState()
