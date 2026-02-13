@@ -1,10 +1,11 @@
 import numpy as np
 from rclpy.node import Node
 from typing import Callable
-from std_msgs.msg import Float32, Float32MultiArray
+from std_msgs.msg import Float32
 from geometry_msgs.msg import PoseStamped, Point, Quaternion, PoseWithCovarianceStamped
 from scipy.linalg import expm
 from scipy.spatial.transform import Rotation as R
+from crazy_encirclement.msg import FilterUnicycleState
 
 # ----------------------------------------------------------------------
 # Embedding Functions
@@ -474,6 +475,9 @@ class FilterUnicycle:
         self.angular_speed: float = float(self.params.get('angular_speed_guess', 0.0))
         self.zupt_threshold: float = float(self.params.get('zupt_threshold', 0.05))
 
+        # State publisher
+        self.pub_pose: Node.Publisher = self.node.create_publisher(FilterUnicycleState, f'/{self.name}/filtered', 10)
+
         self.I = np.eye(self.dim_state)
 
     def predict(self, dt: float) -> dict:
@@ -493,11 +497,11 @@ class FilterUnicycle:
 
             # 3. Zero the process noise for kinematic states
             # This tells the filter: "I am 100% sure the state isn't changing."
-            # We keep position noise tiny just to allow slight GPS corrections.
+            # We keep position noise the same to allow GPS corrections.
             current_Q = np.zeros_like(self.Q)
-            current_Q[0,0] = 1e-6 # x
-            current_Q[1,1] = 1e-6 # y
-            current_Q[5,5] = 1e-6 # z_ground
+            current_Q[0,0] = self.Q[0,0] #* 1e-6 # x
+            current_Q[1,1] = self.Q[1,1] #* 1e-6 # y
+            current_Q[5,5] = self.Q[5,5] #* 1e-6 # z_ground
             # theta, omega, v noise are all 0.0
         else:
             current_Q = self.Q
@@ -532,6 +536,18 @@ class FilterUnicycle:
         # 3. Covariance Propagation
         F = self.I + A * dt
         self.P = F @ self.P @ F.T + current_Q
+
+        # ---- Publish predicted state ----
+        state_msg = FilterUnicycleState()
+        state_msg.position.x = self.p[0]
+        state_msg.position.y = self.p[1]
+        state_msg.position.z = self.z_ground
+        state_msg.heading = self.theta
+        state_msg.linear_speed = self.linear_speed
+        state_msg.angular_speed = self.angular_speed
+        state_msg.covariance = self.P.flatten().tolist()
+        self.pub_pose.publish(state_msg)
+        # ---------------------------------
         
         return self.get_state()
 
