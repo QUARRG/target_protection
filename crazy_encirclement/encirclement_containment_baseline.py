@@ -9,9 +9,11 @@ from std_srvs.srv import Empty
 from std_msgs.msg import Float32
 from crazy_encirclement.filters import BaselineFilter, wrap_to_2pi, wrap_to_pi
 from crazy_encirclement_interfaces.msg import Metadata
+from rclpy.qos import QoSPresetProfiles
+from motion_capture_tracking_interfaces.msg import NamedPoseArray
 
 
-class CircleDistortion(Node):
+class Encirclement_Containment(Node):
     def __init__(self):
         """
             Node that sends the crazyflie to a desired position
@@ -23,6 +25,7 @@ class CircleDistortion(Node):
 
         # Parameters
         self.declare_parameter('robot', 'C20')
+        self.declare_parameter('evader', 'C25')
         self.declare_parameter('number_of_agents', 4)
         self.declare_parameter('initial_phase', '0.0')
         self.declare_parameter('radius_nominal', 1.0)
@@ -33,6 +36,7 @@ class CircleDistortion(Node):
         self.declare_parameter('frame_id', 'world')
 
         self.robot    = str(self.get_parameter('robot').value)
+        self.evader    = str(self.get_parameter('evader').value)
         self.n_agents = int(self.get_parameter('number_of_agents').value)
         self.k_phi    = float(self.get_parameter('k_phi').value)
         self.radius_nominal = float(self.get_parameter('radius_nominal').value)
@@ -72,6 +76,7 @@ class CircleDistortion(Node):
         self.previous_pose = np.zeros(3)
         self.previous_pose_time = 0.0
         self.initial_pose = np.zeros(3)
+        self.distances = None
         
         self.leader   = None
         self.follower = None     
@@ -99,6 +104,14 @@ class CircleDistortion(Node):
             '/encircle',
             self._encircle_callback,
             10)
+
+        #subscribing to bearing measurements
+        qos_profile = QoSPresetProfiles.SENSOR_DATA.value
+        self.create_subscription(
+            NamedPoseArray, f'{self.robot}/distances',
+            self._bearing_callback,
+            qos_profile
+        )
 
         # Subscription to Vicon positions of the robot that are coming from the gps node
         self.create_subscription(
