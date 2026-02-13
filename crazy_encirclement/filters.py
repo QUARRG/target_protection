@@ -539,10 +539,10 @@ class FilterUnicycle:
 
         # ---- Publish predicted state ----
         state_msg = FilterUnicycleState()
-        state_msg.position.x = self.p[0]
-        state_msg.position.y = self.p[1]
-        state_msg.position.z = self.z_ground
-        state_msg.heading = self.theta
+        state_msg.x = self.p[0]
+        state_msg.y = self.p[1]
+        state_msg.z_ground = self.z_ground
+        state_msg.theta = self.theta
         state_msg.linear_speed = self.linear_speed
         state_msg.angular_speed = self.angular_speed
         state_msg.covariance = self.P.flatten().tolist()
@@ -878,8 +878,8 @@ class FilterSpatialBaseline:
         # Publishers
         self.pub_omega_z = self.node.create_publisher(Float32, f'/{self.name}/spatial_baseline/omega_z', 10)
         self.pub_omega_y = self.node.create_publisher(Float32, f'/{self.name}/spatial_baseline/omega_y', 10)
-        self.pub_k_phi_z  = self.node.create_publisher(Float32, f'/{self.name}/spatial_baseline/k_phi_z', 10)
-        self.pub_k_phi_y  = self.node.create_publisher(Float32, f'/{self.name}/spatial_baseline/k_phi_y', 10)
+        self.pub_k_phi_z = self.node.create_publisher(Float32, f'/{self.name}/spatial_baseline/k_phi_z', 10)
+        self.pub_k_phi_y = self.node.create_publisher(Float32, f'/{self.name}/spatial_baseline/k_phi_y', 10)
         self.pub_pose    = self.node.create_publisher(PoseWithCovarianceStamped, f'/{self.name}/spatial_baseline/pose', 10)
         self.pub_phase   = self.node.create_publisher(Float32, f'/{self.name}/spatial_baseline/phase', 10)
         self.pub_adjoint_angle = self.node.create_publisher(Float32, f'/{self.name}/spatial_baseline/adjoint_angle', 10)
@@ -905,6 +905,9 @@ class FilterSpatialBaseline:
             desired_pose_msg: Desired position with adjoint transformation
         """
         prev_leader_phase, prev_ego_phase, prev_follower_phase = phases
+
+        # Updating adjoint rotation
+        self.Ry = self._rotation_y(self.adjoint_angle)
         
         # Compute current state from measurement
         # First, invert the adjoint transformation to get planar position
@@ -1057,7 +1060,7 @@ class Baseline3DFilter(BaseFilter):
             self.normal = np.cross(current_vel, current_pose)/np.linalg.norm(np.cross(current_vel, current_pose))
         else:
             self.normal = np.array([0,0,1])      
-        pose = Re.T @ current_pose
+        pose = self.Re.T @ current_pose
         current_ego_phase = wrap_to_2pi(np.arctan2(pose[1], pose[0]))
         current_ego_phase_normal = wrap_to_2pi(np.arctan2(self.normal[2],self.normal[0]))
         # Rc = build_Rc(current_ego_phase)
@@ -1072,7 +1075,7 @@ class Baseline3DFilter(BaseFilter):
         Re = build_Re(self.embedding_fn, current_ego_phase)
         # desired_ego_phase = wrap_to_2pi(np.arctan2(desired_ego_pose[1], desired_ego_pose[0]))
         # self.Re = exp_SO3(np.asarray([0., omega_y*0.6, 0.])) @ self.Re
-        desired_ego_pose_3D = Re@desired_ego_pose
+        desired_ego_pose_3D = self.Re@desired_ego_pose
         
         # Publish predicted pose, phase and controller gain
         current_pose_msg, desired_pose_msg, phase_msg, radius_msg = self.build_pose_phase_msgs()

@@ -11,15 +11,15 @@ from rclpy.node import Node
 from std_msgs.msg import Float32, Bool
 from std_srvs.srv import Empty
 from geometry_msgs.msg import PoseStamped
-from crazyflie_interfaces.msg import Position
+from crazyflie_interfaces.msg import Position, StringArray
 from crazy_encirclement.filters import FilterSpatialBaseline
-from crazy_encirclement.utils2 import wrap_to_pi, wrap_to_2pi
+from crazy_encirclement.filters import wrap_to_pi, wrap_to_2pi
 from crazy_encirclement_interfaces.msg import Metadata
-from std_msgs.msg import String as StringArray
+from crazyflie_py import Crazyswarm
 
 
 class CircleDistortionSpatialBaseline(Node):
-    def __init__(self):
+    def __init__(self, swarm=None):
         super().__init__("circle_distortion_baseline_spatial")
         
         # Declare and get parameters
@@ -38,24 +38,26 @@ class CircleDistortionSpatialBaseline(Node):
         self.declare_parameter('adjoint_direction', 0.0)  # Direction of adjoint rotation: 1.0 for positive, -1.0 for negative
 
         # Get parameters
-        self.robot = self.get_parameter('robot').get_parameter_value().string_value
-        self.n_agents = self.get_parameter('n_agents').get_parameter_value().integer_value
-        self.k_phi_z = self.get_parameter('k_phi_z').get_parameter_value().double_value
-        self.radius_nominal = self.get_parameter('radius_nominal').get_parameter_value().double_value
+        self.robot           = self.get_parameter('robot').get_parameter_value().string_value
+        self.n_agents        = self.get_parameter('n_agents').get_parameter_value().integer_value
+        self.k_phi_z         = self.get_parameter('k_phi_z').get_parameter_value().double_value
+        self.radius_nominal  = self.get_parameter('radius_nominal').get_parameter_value().double_value
         self.omega_z_nominal = self.get_parameter('omega_z_nominal').get_parameter_value().double_value
-        self.adjoint_angle = self.get_parameter('adjoint_angle').get_parameter_value().double_value
+        self.adjoint_angle   = self.get_parameter('adjoint_angle').get_parameter_value().double_value
         self.omega_y_nominal = self.get_parameter('omega_y_nominal').get_parameter_value().double_value
-        self.k_phi_y = self.get_parameter('k_phi_y').get_parameter_value().double_value
-        self.hover_height = self.get_parameter('hover_height').get_parameter_value().double_value
-        self.predict_hz = self.get_parameter('predict_hz').get_parameter_value().double_value
-        self.update_hz = self.get_parameter('update_hz').get_parameter_value().double_value
-        self.frame_id = self.get_parameter('frame_id').get_parameter_value().string_value
+        self.k_phi_y         = self.get_parameter('k_phi_y').get_parameter_value().double_value
+        self.hover_height    = self.get_parameter('hover_height').get_parameter_value().double_value
+        self.predict_hz      = self.get_parameter('predict_hz').get_parameter_value().double_value
+        self.update_hz       = self.get_parameter('update_hz').get_parameter_value().double_value
+        self.frame_id        = self.get_parameter('frame_id').get_parameter_value().string_value
         self.adjoint_direction = self.get_parameter('adjoint_direction').get_parameter_value().double_value
+        
         # State variables
         self.state = 0  # 0: takeoff, 1: hover, 2: encirclement, 3: landing
         self.has_initial_pose = False
         self.has_final = False
         self.land_flag = False
+        self.timer_period = 1.0 / self.predict_hz  # seconds
         
         # Initial pose and phase
         self.initial_pose = np.zeros(3)
@@ -82,15 +84,31 @@ class CircleDistortionSpatialBaseline(Node):
         self.follower = None
         self.phases = np.zeros(3)  # [leader, ego, follower]
 
+        # Publishers for estimated 3D omega
+        self.publish_estimated_omega_x = self.create_publisher(Float32, f'/{self.robot}/spatial_baseline/measured/omega/x', 10)
+        self.publish_estimated_omega_y = self.create_publisher(Float32, f'/{self.robot}/spatial_baseline/measured/omega/y', 10)
+        self.publish_estimated_omega_z = self.create_publisher(Float32, f'/{self.robot}/spatial_baseline/measured/omega/z', 10)
+        
         # Subscribers
-        self.pose_sub = self.create_subscription(
-            PoseStamped, f'/{self.robot}/vicon_position', self._poses_changed, 10)
-        self.landing_sub = self.create_subscription(
-            Bool, '/landing', self._landing_callback, 10)
-        self.encircle_sub = self.create_subscription(
-            Bool, '/encircle', self._encircle_callback, 10)
-        self.order_sub = self.create_subscription(
-            StringArray, '/agents_order', self._order_callback, 10)
+        self.create_subscription(
+            PoseStamped,
+            f'/{self.robot}/vicon_position',
+            self._poses_changed,
+            10)
+        self.create_subscription(
+            Bool,
+            '/landing',
+            self._landing_callback,
+            10)
+        self.create_subscription(
+            Bool,
+            '/encircle',
+            self._encircle_callback,
+            10)
+        self.create_subscription(
+            StringArray, '/agents_order',
+            self._order_callback,
+            10) 
         
         # Subscribe to command center updates
         self.adjoint_angle_sub = self.create_subscription(
@@ -101,6 +119,8 @@ class CircleDistortionSpatialBaseline(Node):
         # Wait until order is received
         while (not self.has_order):
             rclpy.spin_once(self, timeout_sec=0.1)
+
+        self.info(f"Drone {self.robot} received agent order. Leader: {self.leader}, Follower: {self.follower}")
         
         # Initialize filter with parameters
         params = {
@@ -109,9 +129,10 @@ class CircleDistortionSpatialBaseline(Node):
             'omega_z_nominal': self.omega_z_nominal,
             'adjoint_angle': self.adjoint_angle,
             'omega_y_nominal': self.omega_y_nominal,
-            'k_phi_y': self.k_phi_y
+            'k_phi_y': self.k_phi_y,
+            'dt': self.timer_period
         }
-        self.spatial_baseline_filter = FilterSpatialBaseline(params)
+        self.spatial_baseline_filter = FilterSpatialBaseline(self.robot, params, self)
 
         # Subscribe to leader and follower phases
         self.phase_leader_sub = self.create_subscription(
@@ -119,19 +140,14 @@ class CircleDistortionSpatialBaseline(Node):
         self.phase_follower_sub = self.create_subscription(
             Float32, f'/{self.follower}/spatial_baseline/phase', self._phase_callback_follower, 10)
 
-        # Service client for reboot
-        self.reboot_client = self.create_client(Empty, f'/{self.robot}/reboot')
-
         # Publishers for baseline filter outputs
         self.position_pub    = self.create_publisher(Position, f'/{self.robot}/cmd_position', 10)
         self.publish_phase_diff_leader   = self.create_publisher(Float32, f'/{self.robot}/spatial_baseline/phase_diff/leader', 10)
         self.publish_phase_diff_follower = self.create_publisher(Float32, f'/{self.robot}/spatial_baseline/phase_diff/follower', 10)
-        
-        # Publishers for estimated 3D omega
-        self.publish_estimated_omega_x = self.create_publisher(Float32, f'/{self.robot}/spatial_baseline/measured/omega/x', 10)
-        self.publish_estimated_omega_y = self.create_publisher(Float32, f'/{self.robot}/spatial_baseline/measured/omega/y', 10)
-        self.publish_estimated_omega_z = self.create_publisher(Float32, f'/{self.robot}/spatial_baseline/measured/omega/z', 10)
-        
+
+        # Service client for reboot
+        self.reboot_client = self.create_client(Empty, f'/{self.robot}/reboot')
+
         # Metadata publisher
         self.metadata_pub = self.create_publisher(Metadata, f'/{self.robot}/spatial_baseline/metadata', 10)
 
@@ -141,6 +157,16 @@ class CircleDistortionSpatialBaseline(Node):
         
         # Metadata timer (every 10 seconds)
         self.metadata_timer = self.create_timer(10.0, self.publish_metadata)
+
+        # Arming drones
+        self.swarm = swarm
+        if self.swarm:
+            self.timeHelper = self.swarm.timeHelper
+            self.allcfs = self.swarm.allcfs
+            # arm (one by one)
+            for cf in self.allcfs.crazyflies:
+                cf.arm(True)
+                self.timeHelper.sleep(1.0)
 
         self.info(f"Circle distortion spatial baseline node initialized for {self.robot}")
         self.info(f"Adjoint angle: {self.adjoint_angle:.3f} rad ({np.degrees(self.adjoint_angle):.1f}°)")
@@ -377,8 +403,10 @@ class CircleDistortionSpatialBaseline(Node):
 
 
 def main():
-    rclpy.init()
-    encirclement = CircleDistortionSpatialBaseline()
+    swarm = Crazyswarm()
+    if not rclpy.ok():
+        rclpy.init()
+    encirclement = CircleDistortionSpatialBaseline(swarm)
     rclpy.spin(encirclement)
     encirclement.destroy_node()
     rclpy.shutdown()

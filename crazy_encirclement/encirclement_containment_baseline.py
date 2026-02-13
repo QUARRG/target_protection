@@ -3,15 +3,16 @@ import time
 import numpy as np
 from rclpy.node import Node
 from geometry_msgs.msg import PoseStamped
-from crazyflie_interfaces.msg import StringArray, Position
+from crazyflie_interfaces.msg import StringArray, Position, VelocityWorld
 from std_msgs.msg import Bool
 from std_srvs.srv import Empty
 from std_msgs.msg import Float32
 from crazy_encirclement.filters import BaselineFilter, wrap_to_2pi, wrap_to_pi
+from crazy_encirclement.bearing_formation_control import bearing_based_formation_control
 from crazy_encirclement_interfaces.msg import Metadata
 from rclpy.qos import QoSPresetProfiles
 from motion_capture_tracking_interfaces.msg import NamedPoseArray
-
+from scipy.spatial.transform import Rotation as R
 
 class Encirclement_Containment(Node):
     def __init__(self):
@@ -48,6 +49,9 @@ class Encirclement_Containment(Node):
         # Desired phase difference
         self.desired_phase_diff = 2.0 * np.pi / self.n_agents
         self.initial_radius = self.radius_nominal
+        self.swarm_poses = np.array((3,self.n_agents-1))
+        self.evader_pos = np.array(3)
+        self.R_dw = None
 
         # Filter parameters
         self.declare_parameter('predict_hz', 50.0)
@@ -77,6 +81,7 @@ class Encirclement_Containment(Node):
         self.previous_pose_time = 0.0
         self.initial_pose = np.zeros(3)
         self.distances = None
+        self.order = None
         
         self.leader   = None
         self.follower = None     
@@ -115,7 +120,7 @@ class Encirclement_Containment(Node):
 
         # Subscription to Vicon positions of the robot that are coming from the gps node
         self.create_subscription(
-            PoseStamped, f'/{self.robot}/vicon_position',
+            PoseStamped, f'/{self.robot}/pose',
             self._poses_changed,
             10
         )
@@ -136,7 +141,7 @@ class Encirclement_Containment(Node):
         self.publish_estimated_omega_z   = self.create_publisher(Float32, f'/{self.robot}/baseline/measured/omega/z', 10)
 
         # Wait until order is received
-        while (not self.has_order):
+        while (not self.order):
             rclpy.spin_once(self, timeout_sec=0.1)
 
         # Create filter instance
@@ -158,11 +163,12 @@ class Encirclement_Containment(Node):
 
         # Crazyflie position command publisher
         self.position_pub = self.create_publisher(Position, f'/{self.robot}/cmd_position', 10)
+        # Crazyflie velocidade command publisher
+        self.velocity_pub = self.create_publisher(VelocityWorld, f'/{self.robot}/cmd_velocity_world', 10)
 
         # Publishers for phase differences
         self.publish_phase_diff_leader   = self.create_publisher(Float32, f'/{self.robot}/baseline/phase_diff/leader', 10)
         self.publish_phase_diff_follower = self.create_publisher(Float32, f'/{self.robot}/baseline/phase_diff/follower', 10)
-
 
         # Metadata publisher
         self.metadata_pub = self.create_publisher(Metadata, f'/{self.robot}/metadata', 10)
@@ -210,8 +216,17 @@ class Encirclement_Containment(Node):
                     self.info("Lost phase information, returning to hover.")
             
             elif self.state == 3:
-                pass
-            
+                v = bearing_based_formation_control(self.swarm_poses, self.current_pose, self.evader_pos, 1 ,self.radius_nominal)
+                vel_world = VelocityWorld()
+                v = self.R_dw*v #transforming velocity in drone frame to world frame
+                vel_world.vel.x = v[0]
+                vel_world.vel.y = v[1]
+                vel_world.vel.z = 0
+
+                if np.linalg.norm(self.current_pose[0:2]-self.evader_pos[0:2])< self.radius_nominal:
+                    self.land_flag == True
+                    vel_world = VelocityWorld()
+                    self.velocity_pub.publish(vel_world)
             # Landing state
             elif self.state == 4:
                 self.landing()
@@ -226,11 +241,25 @@ class Encirclement_Containment(Node):
         except KeyboardInterrupt:
             self.info('Exiting open loop command node')
 
+    def _bearing_callback(self, msg: NamedPoseArray):
+        for pose in msg.poses:
+            if pose.name in self.order and pose.name != self.robot:
+                i = self.order.index(pose.name)
+                self.swarm_poses[0,i] = pose.pose.position.x
+                self.swarm_poses[1,i] = pose.pose.position.y
+                self.swarm_poses[2,i] = pose.pose.position.z
+            elif pose.name == self.evader:
+                self.evader_pos[0] = pose.pose.position.x
+                self.evader_pos[1] = pose.pose.position.y 
+                self.evader_pos[2] = pose.pose.position.z  
+            
+
     def _poses_changed(self, robot_pose: PoseStamped):
         """ Topic update callback to the motion capture lib's
             poses topic to send through the external position
             to the crazyflie. All steps based on the Vicon position.
         """
+        self.R_dw = R.from_quat([robot_pose.pose.orientation.x, robot_pose.pose.orientation.y, robot_pose.pose.orientation.z, robot_pose.pose.orientation.w])
         # Initialize the initial pose and phase if not already set using vicon data
         if not self.has_initial_pose:      
             self.initial_pose[0] = robot_pose.pose.position.x
@@ -285,20 +314,19 @@ class Encirclement_Containment(Node):
     def _order_callback(self, msg: StringArray):
         ''' Callback to receive the order of agents. '''
         # self.info(f"Phase received: {msg.data}")
-        order = msg.data
-        for robot in order:
+        self.order = msg.data
+        for robot in self.order:
             if robot == self.robot:
-                i = order.index(robot)
+                i = self.order.index(robot)
                 if i == 0:
-                    self.leader = order[self.n_agents-1]
-                    self.follower = order[i+1]
+                    self.leader = self.order[self.n_agents-1]
+                    self.follower = self.order[i+1]
                 elif i == (self.n_agents-1):
-                    self.leader = order[i-1]
-                    self.follower = order[0]
+                    self.leader = self.order[i-1]
+                    self.follower = self.order[0]
                 else:
-                    self.leader = order[i-1]
-                    self.follower = order[i+1]
-            self.has_order = True
+                    self.leader = self.order[i-1]
+                    self.follower = self.order[i+1]
             # self.info(f"Leader: {self.leader}, Follower: {self.follower}")
 
     def _evader_detection_callback(self, msg: Bool):

@@ -110,9 +110,9 @@ def parse_yaml(context):
         Nodes.append(Node(
             package='crazy_encirclement',
             executable='circle_distortion_baseline_spatial',
-            name=robot+'_circle_distortion',
+            name=f'{robot}_circle_distortion_baseline_spatial',
             output='screen',
-            parameters=[{'robot': robot, 'number_of_agents': len(robots_list), 'adjoint_direction': direction} \
+            parameters=[{'robot': robot, 'n_agents': len(robots_list), 'adjoint_direction': direction} \
                         | filter_yaml_content.get('FilterSpatial', {})],
             ))
         

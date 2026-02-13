@@ -57,14 +57,14 @@ class Bearing(Node):
         for pose in msg.pose:
             if pose.name == self.robot:
                 self_pose = pose.pose
-                R_ws = R.from_quat([pose.pose.orientation.x,pose.pose.orientation.y,pose.pose.orientation.z,pose.pose.orientation.w])
+                R_dw = R.from_quat([pose.pose.orientation.x,pose.pose.orientation.y,pose.pose.orientation.z,pose.pose.orientation.w])
                 break
         for pose in msg.pose:
             if pose.name != self.robot:
                 relative_dist = NamedPose()
                 relative_dist.name = pose.name
                 relative_dist_arr = np.array([pose.pose.position.x - self_pose.position.x, pose.pose.position.y - self_pose.position.y, pose.pose.position.z - self_pose.position.z])
-                relative_dist_arr = R_ws.inv()*relative_dist_arr #convert relative position to ego frame
+                relative_dist_arr = R_dw.inv()*relative_dist_arr #convert relative position to ego frame
                 relative_dist.pose.position.x = relative_dist_arr[0]
                 relative_dist.pose.position.y = relative_dist_arr[1]
                 relative_dist.pose.position.z = relative_dist_arr[2]

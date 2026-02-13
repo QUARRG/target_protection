@@ -108,10 +108,10 @@ def parse_yaml(context):
         # Nodes for each robot
         Nodes.append(Node(
             package='crazy_encirclement',
-            executable='circle_distortion_baseline',
-            name=robot+'_circle_distortion',
+            executable='encirclement_containment_baseline',
+            name=robot+'_encirclement',
             output='screen',
-            parameters=[{'robot': robot, 'number_of_agents': len(robots_list)} \
+            parameters=[{'robot': robot, 'number_of_agents': len(robots_list), 'evader': evader} \
                         | filter_yaml_content.get('FilterGPS', {})],
             ))
         
@@ -122,6 +122,14 @@ def parse_yaml(context):
             name=robot+'_gps_node',
             output='screen',
             parameters=[{'robot': robot} | filter_yaml_content.get('FilterGPS', {})],
+        ))
+        # Bearing Node for each robot
+        Nodes.append(Node(
+            package='crazy_encirclement',
+            executable='bearing',
+            name=robot+'_bearing',
+            output='screen',
+            parameters=[{'robot': robot, relative: relative}],
         ))
 
         # Watch dog node for each robot

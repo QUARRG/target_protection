@@ -27,7 +27,7 @@ class MocapRelative(Node):
             
         # QoS Profile
         poses_qos_deadline = self.update_hz  # Hz
-        self.R_d0w = {}
+        self.R_wd0 = {}
         
         # qos_profile = QoSProfile(reliability =QoSReliabilityPolicy.BEST_EFFORT,
         #     history=QoSHistoryPolicy.KEEP_LAST,
@@ -74,10 +74,10 @@ class MocapRelative(Node):
             #         qw = pose.pose.orientation.w
             #         self.R_wc = R.from_quat([qx, qy, qz, qw])  # Car to world
             #         self.R_cw = self.R_wc.inv()                # World to Car
-            if not self.R_d0w:
+            if not self.R_wd0:
                 for pose in msg.poses:
                     R_aux = R.from_quat([pose.pose.orientation.x,pose.pose.orientation.y,pose.pose.orientation.z,pose.pose.orientation.w])
-                    self.R_d0w[pose.name] = R_aux.inv() #save the inverse of the initial rotation
+                    self.R_wd0[pose.name] = R_aux.inv() #save the inverse of the initial rotation
             else:
                 self.has_mocap = True
                 self.ref_pose.header = msg.header
@@ -105,13 +105,13 @@ class MocapRelative(Node):
                         relative_pose_d = NamedPose()
                         relative_pose_d.name = pose.name
                         rel_pose_w = np.array([pose.pose.position.x - self.ref_pose.pose.position.x,pose.pose.position.y - self.ref_pose.pose.position.y,pose.pose.position.z - self.ref_pose.pose.position.z])
-                        rel_pose_d = self.R_d0w[pose.name].apply(rel_pose_w)
+                        rel_pose_d = self.R_wd0[pose.name].apply(rel_pose_w)
                         relative_pose_d.pose.position.x = rel_pose_d[0]
                         relative_pose_d.pose.position.y = rel_pose_d[1]
                         relative_pose_d.pose.position.z = rel_pose_d[2]
                         #drone orientation w.r.t. its initial orientation
-                        R_wd = R.from_quat([pose.pose.orientation.x,pose.pose.orientation.y,pose.pose.orientation.z,pose.pose.orientation.w])
-                        R_dd = self.R_d0w[pose.name]*R_wd
+                        R_dw = R.from_quat([pose.pose.orientation.x,pose.pose.orientation.y,pose.pose.orientation.z,pose.pose.orientation.w])
+                        R_dd = self.R_wd0[pose.name]*R_dw
                         # R_cd = self.R_0*self.R_wc
                         qx, qy, qz, qw = R_dd.as_quat()
                         relative_pose_d.pose.orientation.x = qx
