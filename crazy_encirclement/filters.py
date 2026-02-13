@@ -5,7 +5,7 @@ from std_msgs.msg import Float32
 from geometry_msgs.msg import PoseStamped, Point, Quaternion, PoseWithCovarianceStamped
 from scipy.linalg import expm
 from scipy.spatial.transform import Rotation as R
-from crazy_encirclement.msg import FilterUnicycleState
+from crazy_encirclement_interfaces.msg import FilterUnicycleState
 
 # ----------------------------------------------------------------------
 # Embedding Functions

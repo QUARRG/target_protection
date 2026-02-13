@@ -17,10 +17,7 @@
   <depend>geometry_msgs</depend>
   <depend>motion_capture_tracking_interfaces</depend>
   <depend>crazyflie</depend>
-
-  <buildtool_depend>rosidl_default_generators</buildtool_depend>
-  <exec_depend>rosidl_default_runtime</exec_depend>
-  <member_of_group>rosidl_interface_packages</member_of_group>
+  <depend>crazy_encirclement_interfaces</depend>
 
   <export>
     <build_type>ament_python</build_type>
