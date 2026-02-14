@@ -312,7 +312,13 @@ class FollowUnicycle(Node):
     def landing_traj(self, t_max: float):
         ''' Landing trajectory generation. '''
         # self.t_landing = np.arange(t_max, 0.1, -self.timer_period)
-        self.t_landing = np.arange(self.T_final[2, 3], self.T_init[2, 3], -0.015)
+        try:
+            self.t_landing = np.arange(self.T_final[2, 3], self.T_init[2, 3], -0.015)
+        except Exception as e:
+            self.info(f"Error in landing trajectory generation: {e}")
+            self.t_landing = np.arange(t_max, 0.1, -self.timer_period)
+
+        self.info(f'Landing trajectory time steps: {self.t_landing}')
         self.i_landing = 0
         self.r_landing = np.zeros((3, len(self.t_landing)))
         self.r_landing[0,:] = self.T_final[0, 3] * np.ones(len(self.t_landing))
