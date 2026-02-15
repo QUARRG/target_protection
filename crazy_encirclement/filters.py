@@ -487,22 +487,20 @@ class FilterUnicycle:
         is_stopped = abs(self.linear_speed) < self.zupt_threshold
 
         if is_stopped:
-            # STRATEGY A: FREEZE
-            # 1. Force velocity to zero (stop "coasting")
+            # 1. Force velocity to zero
             self.linear_speed = 0.0
-            
-            # 2. Assume angular velocity is zero (stop "spinning")
-            # Even if it IS spinning, we can't see it, so assuming 0 is safer for stability.
             self.angular_speed = 0.0
-
-            # 3. Zero the process noise for kinematic states
-            # This tells the filter: "I am 100% sure the state isn't changing."
-            # We keep position noise the same to allow GPS corrections.
+            
+            # 2. Freeze Covariance
+            # We must treat the kinematic parameters as "Fixed Constants" (Zero Noise)
             current_Q = np.zeros_like(self.Q)
-            current_Q[0,0] = 1e-6 # x
-            current_Q[1,1] = 1e-6 # y
-            current_Q[5,5] = 1e-6 # z_ground
-            # theta, omega, v noise are all 0.0
+            
+            # Allow small position noise for GPS corrections
+            current_Q[0,0] = self.Q[0,0] # x
+            current_Q[1,1] = self.Q[1,1] # y
+            current_Q[5,5] = self.Q[5,5] # z_ground
+            
+            # IMPORTANT: theta(2), omega(3), v(4) must have 0.0 noise
         else:
             current_Q = self.Q
         # --- ZUPT LOGIC END ---
@@ -523,20 +521,22 @@ class FilterUnicycle:
         A = np.zeros((self.dim_state, self.dim_state))
         
         # Row 0 (x-error dynamics)
-        A[0, 1] = -self.angular_speed
-        A[0, 3] = -1.0
+        # x error grows if we have y error while turning (Coriolis)
+        # x error grows if we have linear velocity error (xi_v at index 4)
+        A[0, 1] = self.angular_speed  # +omega * y
+        A[0, 4] = -1.0                # -1 * (v_hat - v)
         
         # Row 1 (y-error dynamics)
-        A[1, 0] = self.angular_speed
-        A[1, 2] = self.linear_speed
-        A[1, 4] = -1.0
+        # y error grows if we have x error while turning (Coriolis)
+        # y error grows if we have heading error (xi_theta at index 2) while moving
+        A[1, 0] = -self.angular_speed # -omega * x
+        A[1, 2] = self.linear_speed   # +v * theta  <-- Critical for lateral drift
         
         # Row 2 (theta-error dynamics)
-        A[2, 3] = 1.0  # theta depends on omega
+        # theta error grows if we have angular velocity error (xi_omega at index 3)
+        A[2, 3] = -1.0                # -1 * (omega_hat - omega)
         
-        # Row 3 (omega-error dynamics) is 0 (random walk model)
-        # Row 4 (v-error dynamics) is 0 (random walk model)
-        # Row 5 (z-error dynamics) is 0 because z_ground is static
+        # Row 3 (omega), 4 (v), 5 (z) are 0 (Random Walk / Constant)
 
         # 3. Covariance Propagation
         F = self.I + A * dt
