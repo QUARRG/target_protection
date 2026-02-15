@@ -16,9 +16,11 @@ class MocapRelative(Node):
         self.declare_parameter('update_hz', 200.0)
         self.declare_parameter('reference_object', 'LIMO')
         self.declare_parameter('evader', 'C26') #the evader position will not be relatve
+        self.declare_parameter('pursuers', ['C23','C24'])
         self.update_hz = self.get_parameter('update_hz').get_parameter_value().double_value
         self.reference = self.get_parameter('reference_object').get_parameter_value().string_value
         self.evader = self.get_parameter('evader').get_parameter_value().string_value
+        self.pursuers = self.get_parameter('pursuers').value
         # Transformation matrices
         self.R_wc = R.from_quat([0, 0, 0, 1])
         self.R_cw = R.from_quat([0, 0, 0, 1])
@@ -57,12 +59,12 @@ class MocapRelative(Node):
          
         self.ref_pose = PoseStamped()
         self.relative_poses = NamedPoseArray()
-        self.timer = self.create_timer(1/self.update_hz, self._timer_callback)
+        
         self.relative_position_pub = self.create_publisher(NamedPoseArray, 'poses_relative', qos_profile)
-
+        self.timer = self.create_timer(1/100, self._timer_callback)
     def _callback(self, msg: NamedPoseArray):
         '''Callback function to process incoming NamedPoseArray messages from Vicon and publish noisy GPS positions.'''
-        if msg:         
+         
             # # Getting reference pose
             # for pose in msg.poses:
             #     if pose.name == self.reference:
@@ -75,51 +77,51 @@ class MocapRelative(Node):
             #         qw = pose.pose.orientation.w
             #         self.R_wc = R.from_quat([qx, qy, qz, qw])  # Car to world
             #         self.R_cw = self.R_wc.inv()                # World to Car
-            if not self.R_wd0:
-                for pose in msg.poses:
-                    R_aux = R.from_quat([pose.pose.orientation.x,pose.pose.orientation.y,pose.pose.orientation.z,pose.pose.orientation.w])
-                    self.R_wd0[pose.name] = R_aux.inv() #save the inverse of the initial rotation
-            else:
-                self.has_mocap = True
-                self.ref_pose.header = msg.header
-                self.relative_poses.header = msg.header
-                self.relative_poses.poses = []
-                
-                # Getting reference pose
-                for pose in msg.poses:
-                    if pose.name == self.reference:
-                        self.ref_pose.pose.position.x = pose.pose.position.x
-                        self.ref_pose.pose.position.y = pose.pose.position.y
-                        self.ref_pose.pose.position.z = pose.pose.position.z
-                        qx = pose.pose.orientation.x
-                        qy = pose.pose.orientation.y
-                        qz = pose.pose.orientation.z
-                        qw = pose.pose.orientation.w
-                        self.R_wc = R.from_quat([qx, qy, qz, qw])
-                        self.R_cw = self.R_wc.inv()
-                    elif pose.name == self.evader:
-                        self.relative_poses.poses.append(pose)
+        if (not all(item in self.R_wd0 for item in self.pursuers)) or (self.evader not in self.R_wd0):
+            for pose in msg.poses:
+                R_aux = R.from_quat([pose.pose.orientation.x,pose.pose.orientation.y,pose.pose.orientation.z,pose.pose.orientation.w])
+                self.R_wd0[pose.name] = R_aux.inv() #save the inverse of the initial rotation
+        else:
+            self.has_mocap = True
+            self.ref_pose.header = msg.header
+            self.relative_poses.header = msg.header
+            self.relative_poses.poses = []
+            
+            # Getting reference pose
+            for pose in msg.poses:
+                if pose.name == self.reference:
+                    self.ref_pose.pose.position.x = pose.pose.position.x
+                    self.ref_pose.pose.position.y = pose.pose.position.y
+                    self.ref_pose.pose.position.z = pose.pose.position.z
+                    qx = pose.pose.orientation.x
+                    qy = pose.pose.orientation.y
+                    qz = pose.pose.orientation.z
+                    qw = pose.pose.orientation.w
+                    self.R_wc = R.from_quat([qx, qy, qz, qw])
+                    self.R_cw = self.R_wc.inv()
+                elif pose.name == self.evader:
+                    self.relative_poses.poses.append(pose)
 
-                # Getting relative poses of other robots with respect to ego
-                for pose in msg.poses:
-                    if pose.name != self.reference:
-                        relative_pose_d = NamedPose()
-                        relative_pose_d.name = pose.name
-                        rel_pose_w = np.array([pose.pose.position.x - self.ref_pose.pose.position.x,pose.pose.position.y - self.ref_pose.pose.position.y,pose.pose.position.z - self.ref_pose.pose.position.z])
-                        rel_pose_d = self.R_wd0[pose.name].apply(rel_pose_w)
-                        relative_pose_d.pose.position.x = rel_pose_d[0]
-                        relative_pose_d.pose.position.y = rel_pose_d[1]
-                        relative_pose_d.pose.position.z = rel_pose_d[2]
-                        #drone orientation w.r.t. its initial orientation
-                        R_dw = R.from_quat([pose.pose.orientation.x,pose.pose.orientation.y,pose.pose.orientation.z,pose.pose.orientation.w])
-                        R_dd = self.R_wd0[pose.name]*R_dw
-                        # R_cd = self.R_0*self.R_wc
-                        qx, qy, qz, qw = R_dd.as_quat()
-                        relative_pose_d.pose.orientation.x = qx
-                        relative_pose_d.pose.orientation.y = qy
-                        relative_pose_d.pose.orientation.z = qz
-                        relative_pose_d.pose.orientation.w = qw
-                        self.relative_poses.poses.append(relative_pose_d)
+            # Getting relative poses of other robots with respect to ego
+            for pose in msg.poses:
+                if pose.name != self.reference and pose.name != self.evader:
+                    relative_pose_d = NamedPose()
+                    relative_pose_d.name = pose.name
+                    rel_pose_w = np.array([pose.pose.position.x - self.ref_pose.pose.position.x,pose.pose.position.y - self.ref_pose.pose.position.y,pose.pose.position.z - self.ref_pose.pose.position.z])
+                    rel_pose_d = self.R_wd0[pose.name].apply(rel_pose_w)
+                    relative_pose_d.pose.position.x = rel_pose_d[0]
+                    relative_pose_d.pose.position.y = rel_pose_d[1]
+                    relative_pose_d.pose.position.z = rel_pose_d[2]
+                    #drone orientation w.r.t. its initial orientation
+                    R_dw = R.from_quat([pose.pose.orientation.x,pose.pose.orientation.y,pose.pose.orientation.z,pose.pose.orientation.w])
+                    R_dd = self.R_wd0[pose.name]*R_dw
+                    # R_cd = self.R_0*self.R_wc
+                    qx, qy, qz, qw = R_dd.as_quat()
+                    relative_pose_d.pose.orientation.x = qx
+                    relative_pose_d.pose.orientation.y = qy
+                    relative_pose_d.pose.orientation.z = qz
+                    relative_pose_d.pose.orientation.w = qw
+                    self.relative_poses.poses.append(relative_pose_d)
             
             # Publish the Vicon position without noise
             # self.vicon_position_pub.publish(self.ref_pose)

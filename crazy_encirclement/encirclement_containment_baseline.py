@@ -6,23 +6,26 @@ from geometry_msgs.msg import PoseStamped
 from crazyflie_interfaces.msg import StringArray, Position, VelocityWorld
 from std_msgs.msg import Bool
 from std_srvs.srv import Empty
+from crazyflie_interfaces.srv import Arm
 from std_msgs.msg import Float32
 from crazy_encirclement.filters import BaselineFilter, wrap_to_2pi, wrap_to_pi
 from crazy_encirclement.bearing_formation_control import bearing_based_formation_control
 from crazy_encirclement_interfaces.msg import Metadata
 from rclpy.qos import QoSPresetProfiles
 from motion_capture_tracking_interfaces.msg import NamedPoseArray
+from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy, QoSPresetProfiles
+from rclpy.duration import Duration
 from scipy.spatial.transform import Rotation as R
 
 class Encirclement_Containment(Node):
-    def __init__(self):
+    def __init__(self, swarm=None):
         """
             Node that sends the crazyflie to a desired position
             The desired position comes from the distortion of a circle
         """
         super().__init__('circle_distortion')
         self.info = self.get_logger().info
-        self.info('Circle distortion node has been started.')
+        self.swarm = swarm
 
         # Parameters
         self.declare_parameter('robot', 'C20')
@@ -33,7 +36,7 @@ class Encirclement_Containment(Node):
         self.declare_parameter('omega_nominal', 0.8)
         self.declare_parameter('k_phi', 8.0)
         self.declare_parameter('embedding_fn_name', 'modelB')
-        self.declare_parameter('hover_height', 0.9)
+        self.declare_parameter('hover_height', 0.3)
         self.declare_parameter('frame_id', 'world')
 
         self.robot    = str(self.get_parameter('robot').value)
@@ -49,9 +52,9 @@ class Encirclement_Containment(Node):
         # Desired phase difference
         self.desired_phase_diff = 2.0 * np.pi / self.n_agents
         self.initial_radius = self.radius_nominal
-        self.swarm_poses = np.array((3,self.n_agents-1))
+        self.swarm_poses = np.zeros((3,self.n_agents-1))
         self.evader_pos = np.zeros(3)
-        self.R_dw = None
+        self.R_dw = R.identity()
 
         # Filter parameters
         self.declare_parameter('predict_hz', 50.0)
@@ -61,6 +64,7 @@ class Encirclement_Containment(Node):
 
         # Reboot client
         self.reboot_client = self.create_client(Empty, self.robot + '/reboot')
+        # arm client
 
         # Flags and variables
         self.timer_period = 1.0 / self.predict_hz
@@ -117,12 +121,19 @@ class Encirclement_Containment(Node):
             self._bearing_callback,
             qos_profile
         )
+        poses_qos_deadline = 100.0  # example Hz
 
+        qos_profile = QoSProfile(
+            history=QoSHistoryPolicy.KEEP_LAST,
+            depth=1,
+            reliability=QoSReliabilityPolicy.BEST_EFFORT,
+            deadline=Duration(nanoseconds=int(1e9 / poses_qos_deadline))
+        )
         # Subscription to Vicon positions of the robot that are coming from the gps node
         self.create_subscription(
-            PoseStamped, f'/{self.robot}/pose',
+            NamedPoseArray, 'poses_relative',
             self._poses_changed,
-            10
+            qos_profile
         )
 
         # Subscription to agents order
@@ -173,10 +184,16 @@ class Encirclement_Containment(Node):
         # Metadata publisher
         self.metadata_pub = self.create_publisher(Metadata, f'/{self.robot}/metadata', 10)
         self.metadata_timer = self.create_timer(10.0, self.publish_metadata)
-        
+        # Arming all drones
+        self.arm_client = self.create_client(Arm, self.robot + '/arm')
+        # Wait until the service is available
+        while not self.arm_client.wait_for_service(timeout_sec=1.0):
+            self.get_logger().info('Service not available, waiting again...')
+        self.arm()
+        time.sleep(2)
         # input("Press Enter to takeoff")
         self.timer = self.create_timer(self.timer_period, self.timer_callback)
-
+        self.info('Circle distortion node has been started.')
     def timer_callback(self):
         ''' Timer callback to send position commands to the crazyflie based on the current state. '''
         try:
@@ -216,15 +233,19 @@ class Encirclement_Containment(Node):
                     self.info("Lost phase information, returning to hover.")
             
             elif self.state == 3:
-                v = bearing_based_formation_control(self.swarm_poses, self.current_pose, self.evader_pos, 1 ,self.radius_nominal)
-                vel_world = VelocityWorld()
+                v = bearing_based_formation_control(self.swarm_poses, self.evader_pos, 0.2 ,2*self.radius_nominal)                
                 v = self.R_dw.apply(v) #transforming velocity in drone frame to world frame
+                vel_world = VelocityWorld()
                 vel_world.vel.x = v[0]
                 vel_world.vel.y = v[1]
-                vel_world.vel.z = 0
-
-                if np.linalg.norm(self.current_pose[0:2]-self.evader_pos[0:2])< self.radius_nominal:
-                    self.land_flag == True
+                vel_world.vel.z = v[2]
+                self.velocity_pub.publish(vel_world)
+                # next_pos = self.current_pose + v *self.timer_period
+                # next_pos[2] = self.hover_height
+                # self.send_position(next_pos)
+                if np.linalg.norm(self.evader_pos[0:2])< self.radius_nominal:
+                    self.info(f'Velocity commands {self.evader_pos[0:2]}')
+                    self.state = 2
                     vel_world = VelocityWorld()
                     self.velocity_pub.publish(vel_world)
             # Landing state
@@ -255,50 +276,54 @@ class Encirclement_Containment(Node):
                     self.evader_pos[2] = pose.pose.position.z  
             
 
-    def _poses_changed(self, robot_pose: PoseStamped):
+    def _poses_changed(self, msg: NamedPoseArray):
         """ Topic update callback to the motion capture lib's
             poses topic to send through the external position
             to the crazyflie. All steps based on the Vicon position.
         """
-        self.R_dw = R.from_quat([robot_pose.pose.orientation.x, robot_pose.pose.orientation.y, robot_pose.pose.orientation.z, robot_pose.pose.orientation.w])
-        # Initialize the initial pose and phase if not already set using vicon data
-        if not self.has_initial_pose:      
-            self.initial_pose[0] = robot_pose.pose.position.x
-            self.initial_pose[1] = robot_pose.pose.position.y
-            self.initial_pose[2] = robot_pose.pose.position.z   
-            self.initial_phase = wrap_to_2pi(np.arctan2(self.initial_pose[1], self.initial_pose[0]))
-            self.initial_radius = np.sqrt(self.initial_pose[0]**2 + self.initial_pose[1]**2)
-            self.previous_pose = self.initial_pose.copy()
-            self.previous_pose_time = robot_pose.header.stamp.sec + robot_pose.header.stamp.nanosec * 1e-9
-            self.takeoff_traj(4)
-            self.has_initial_pose = True    
-            
-        # Update current pose if not landing
-        elif not self.land_flag:
-            self.current_pose[0] = robot_pose.pose.position.x
-            self.current_pose[1] = robot_pose.pose.position.y
-            self.current_pose[2] = robot_pose.pose.position.z
+        for robot_pose in msg.poses:
+            if robot_pose.name == self.robot:
+                self.R_dw = R.from_quat([robot_pose.pose.orientation.x, robot_pose.pose.orientation.y, robot_pose.pose.orientation.z, robot_pose.pose.orientation.w])
+                
+                # Initialize the initial pose and phase if not already set using vicon data
+                if not self.has_initial_pose:    
+                    self.info("Has initial pose $$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$4")  
+                    self.initial_pose[0] = robot_pose.pose.position.x
+                    self.initial_pose[1] = robot_pose.pose.position.y
+                    self.initial_pose[2] = robot_pose.pose.position.z   
+                    self.initial_phase = wrap_to_2pi(np.arctan2(self.initial_pose[1], self.initial_pose[0]))
+                    self.initial_radius = np.sqrt(self.initial_pose[0]**2 + self.initial_pose[1]**2)
+                    self.previous_pose = self.initial_pose.copy()
+                    self.previous_pose_time = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+                    self.takeoff_traj(3)
+                    self.has_initial_pose = True    
+                    
+                # Update current pose if not landing
+                elif not self.land_flag:
+                    self.current_pose[0] = robot_pose.pose.position.x
+                    self.current_pose[1] = robot_pose.pose.position.y
+                    self.current_pose[2] = robot_pose.pose.position.z
 
-            # Estimate 3D omega using the delta pose and velocity cross product
-            delta_pose = self.current_pose - self.previous_pose
-            delta_velocity = delta_pose / ( (robot_pose.header.stamp.sec + robot_pose.header.stamp.nanosec * 1e-9) - self.previous_pose_time )
-            omega_3D = np.cross(self.previous_pose, delta_velocity) / (np.linalg.norm(self.previous_pose)**2 + 1e-6)
-            self.previous_pose = self.current_pose.copy()
-            self.previous_pose_time = robot_pose.header.stamp.sec + robot_pose.header.stamp.nanosec * 1e-9
-            self.publish_estimated_omega_x.publish(Float32(data=omega_3D[0]))
-            self.publish_estimated_omega_y.publish(Float32(data=omega_3D[1]))
-            self.publish_estimated_omega_z.publish(Float32(data=omega_3D[2]))
+                    # Estimate 3D omega using the delta pose and velocity cross product
+                    # delta_pose = self.current_pose - self.previous_pose
+                    # delta_velocity = delta_pose / ( (msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9) - self.previous_pose_time )
+                    # omega_3D = np.cross(self.previous_pose, delta_velocity) / (np.linalg.norm(self.previous_pose)**2 + 1e-6)
+                    # self.previous_pose = self.current_pose.copy()
+                    # self.previous_pose_time = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+                    # self.publish_estimated_omega_x.publish(Float32(data=omega_3D[0]))
+                    # self.publish_estimated_omega_y.publish(Float32(data=omega_3D[1]))
+                    # self.publish_estimated_omega_z.publish(Float32(data=omega_3D[2]))
 
-        # Set final pose when landing is commanded
-        elif (self.has_final == False) and (self.land_flag == True):
-            self.final_pose = np.zeros(3)
-            self.info("Landing...")
-            self.final_pose[0] = robot_pose.pose.position.x
-            self.final_pose[1] = robot_pose.pose.position.y
-            self.final_pose[2] = robot_pose.pose.position.z
-            self.landing_traj(3)
-            self.has_final = True
-            self.state = 4
+                # Set final pose when landing is commanded
+                elif (self.has_final == False) and (self.land_flag == True):
+                    self.final_pose = np.zeros(3)
+                    self.info("Landing...")
+                    self.final_pose[0] = robot_pose.pose.position.x
+                    self.final_pose[1] = robot_pose.pose.position.y
+                    self.final_pose[2] = robot_pose.pose.position.z
+                    self.landing_traj(3)
+                    self.has_final = True
+                    self.state = 4
 
     def _phase_callback_leader(self, msg: Float32):
         ''' Callback to receive the filtered phase of the leader agent. '''
@@ -315,26 +340,31 @@ class Encirclement_Containment(Node):
     def _order_callback(self, msg: StringArray):
         ''' Callback to receive the order of agents. '''
         # self.info(f"Phase received: {msg.data}")
-        self.order = msg.data
-        for robot in self.order:
+        order = msg.data
+        self.order = []
+        for robot in order:
             if robot == self.robot:
-                i = self.order.index(robot)
+                i = order.index(robot)
                 if i == 0:
-                    self.leader = self.order[self.n_agents-1]
-                    self.follower = self.order[i+1]
+                    self.leader = order[self.n_agents-1]
+                    self.follower = order[i+1]
                 elif i == (self.n_agents-1):
-                    self.leader = self.order[i-1]
-                    self.follower = self.order[0]
+                    self.leader = order[i-1]
+                    self.follower = order[0]
                 else:
-                    self.leader = self.order[i-1]
-                    self.follower = self.order[i+1]
+                    self.leader = order[i-1]
+                    self.follower = order[i+1]
+            else:
+
+                self.order.append(robot)
             # self.info(f"Leader: {self.leader}, Follower: {self.follower}")
 
     def _evader_detection_callback(self, msg: Bool):
         if msg.data == True:
-            self.state == 3
-        else:
-            self.state == 1 #hover
+            self.state = 3
+            vel_world = VelocityWorld()
+            self.velocity_pub.publish(vel_world)
+        #     self.state == 1 #hover
             
     def publish_phase_differences(self):
         ''' Publish phase differences to leader and follower. '''
@@ -363,7 +393,7 @@ class Encirclement_Containment(Node):
 
     def landing_traj(self, t_max: float):
         ''' Landing trajectory generation. '''
-        self.t_landing = np.arange(t_max, 0.1, -self.timer_period)
+        self.t_landing = np.arange(t_max, 0, -self.timer_period)
         self.i_landing = 0
         self.r_landing = np.zeros((3, len(self.t_landing)))
         self.r_landing[0,:] += self.final_pose[0] * np.ones(len(self.t_landing))
@@ -406,11 +436,8 @@ class Encirclement_Containment(Node):
 
     def hover(self):
         ''' Hovering procedure at the hover height. '''
-        msg = Position()
-        msg.x = self.initial_pose[0]
-        msg.y = self.initial_pose[1]
-        msg.z = self.hover_height
-        self.position_pub.publish(msg)
+        hover_pose = np.array([self.initial_pose[0], self.initial_pose[1], self.hover_height])
+        self.send_position(hover_pose)
 
     def landing(self):
         ''' Landing procedure to reach the ground. '''
@@ -420,8 +447,23 @@ class Encirclement_Containment(Node):
         ''' Reboot the system. '''
         req = Empty.Request()
         self.reboot_client.call_async(req)
-        time.sleep(1.0)    
+        time.sleep(1.0)   
+         
+    def arm(self):
+        ''' Reboot the system. '''
+        req = Arm.Request()
+        req.arm = True
+        self.arm_client.call_async(req)
+        # Call the service and get the response asynchronously
+        future = self.arm_client.call_async(req)
+        # Wait for the result and handle the response
+        rclpy.spin_until_future_complete(self, future)
 
+        # Now handle the response
+        if future.result() is not None:
+            self.get_logger().info(f'Service call successful, response: {future.result()}')
+        else:
+            self.get_logger().error('Service call failed')
     def send_position(self, r):
         ''' Send position command to the crazyflie. '''
         msg = Position()
@@ -432,6 +474,7 @@ class Encirclement_Containment(Node):
 
 
 def main():
+
     rclpy.init()
     encirclement = Encirclement_Containment()
     rclpy.spin(encirclement)

@@ -73,7 +73,7 @@ class FollowUnicycle(Node):
         self.T_init  = np.eye(4)
         self.T_final = np.eye(4)
         self.T_curr  = np.eye(4)
-        self.set_point = np.array([-0.3, 0., 0.3])  # Offset from LIMO position
+        self.set_point = np.array([0., 0., 0.3])  # Offset from LIMO position
 
         self.i_landing = 0
         self.i_takeoff = 0
@@ -313,7 +313,7 @@ class FollowUnicycle(Node):
         ''' Landing trajectory generation. '''
         # self.t_landing = np.arange(t_max, 0.1, -self.timer_period)
         try:
-            self.t_landing = np.arange(self.T_final[2, 3], self.T_init[2, 3], -0.015)
+            self.t_landing = np.arange(self.T_final[2, 3], self.T_init[2, 3], -0.001)
         except Exception as e:
             self.info(f"Error in landing trajectory generation: {e}")
             self.t_landing = np.arange(t_max, 0.1, -self.timer_period)

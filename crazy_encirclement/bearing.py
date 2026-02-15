@@ -20,6 +20,8 @@ class Bearing(Node):
         self.robot = self.get_parameter('robot').get_parameter_value().string_value
         self.frequency = self.get_parameter('update_hz').get_parameter_value().double_value
         self.has_distances = False
+        self.ego_pose = None
+        self.R_dw = R.identity()
         # self.declare_parameter('evader', 'C26') #the evader position will not be relatve
         poses_qos_deadline = 100.0  # example Hz
 
@@ -57,19 +59,20 @@ class Bearing(Node):
         self.distances.poses = []
         for pose in msg.poses:
             if pose.name == self.robot:
-                self_pose = pose.pose
-                R_dw = R.from_quat([pose.pose.orientation.x,pose.pose.orientation.y,pose.pose.orientation.z,pose.pose.orientation.w])
+                self.ego_pose = pose.pose
+                self.R_dw = R.from_quat([pose.pose.orientation.x,pose.pose.orientation.y,pose.pose.orientation.z,pose.pose.orientation.w])
                 break
-        for pose in msg.poses:
-            if pose.name != self.robot:
-                relative_dist = NamedPose()
-                relative_dist.name = pose.name
-                relative_dist_arr = np.array([pose.pose.position.x - self_pose.position.x, pose.pose.position.y - self_pose.position.y, pose.pose.position.z - self_pose.position.z])
-                relative_dist_arr = R_dw.inv().apply(relative_dist_arr) #convert relative position to ego frame
-                relative_dist.pose.position.x = relative_dist_arr[0]
-                relative_dist.pose.position.y = relative_dist_arr[1]
-                relative_dist.pose.position.z = relative_dist_arr[2]
-                self.distances.poses.append(relative_dist)
+        if self.ego_pose:
+            for pose in msg.poses:
+                if pose.name != self.robot:
+                    relative_dist = NamedPose()
+                    relative_dist.name = pose.name
+                    relative_dist_arr = np.array([pose.pose.position.x - self.ego_pose.position.x, pose.pose.position.y - self.ego_pose.position.y, pose.pose.position.z - self.ego_pose.position.z])
+                    relative_dist_arr = self.R_dw.inv().apply(relative_dist_arr) #convert relative position to ego frame
+                    relative_dist.pose.position.x = relative_dist_arr[0]
+                    relative_dist.pose.position.y = relative_dist_arr[1]
+                    relative_dist.pose.position.z = relative_dist_arr[2]
+                    self.distances.poses.append(relative_dist)
 
 def main():
     rclpy.init()

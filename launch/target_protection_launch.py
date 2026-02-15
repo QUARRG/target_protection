@@ -158,7 +158,7 @@ def parse_yaml(context):
             executable='motion_capture_tracking_relative',
             name='poses_relative',
             output='screen',
-            parameters=[{'evader': evader} | filter_yaml_content.get('FilterRelative', {})],
+            parameters=[{'evader': evader, 'pursuers': robots_list} | filter_yaml_content.get('FilterRelative', {})],
         ))
 
     return Nodes
