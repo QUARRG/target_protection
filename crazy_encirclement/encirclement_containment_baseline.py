@@ -55,6 +55,7 @@ class Encirclement_Containment(Node):
         self.swarm_poses = np.zeros((3,self.n_agents-1))
         self.evader_pos = np.zeros(3)
         self.R_dw = R.identity()
+        self.all_order = None
 
         # Filter parameters
         self.declare_parameter('predict_hz', 50.0)
@@ -166,6 +167,7 @@ class Encirclement_Containment(Node):
             'frame_id': self.frame_id,
             'dt': self.timer_period
         }
+
         self.baseline = BaselineFilter(self.robot, self.embedding_fn_name, self.params, self)
 
         # Create subscribers for the other agents' filtered phases
@@ -176,6 +178,8 @@ class Encirclement_Containment(Node):
         self.position_pub = self.create_publisher(Position, f'/{self.robot}/cmd_position', 10)
         # Crazyflie velocidade command publisher
         self.velocity_pub = self.create_publisher(VelocityWorld, f'/{self.robot}/cmd_velocity_world', 10)
+
+        self.encircle_pub = self.create_publisher(Bool, '/encircle',10)
 
         # Publishers for phase differences
         self.publish_phase_diff_leader   = self.create_publisher(Float32, f'/{self.robot}/baseline/phase_diff/leader', 10)
@@ -233,7 +237,7 @@ class Encirclement_Containment(Node):
                     self.info("Lost phase information, returning to hover.")
             
             elif self.state == 3:
-                v = bearing_based_formation_control(self.swarm_poses, self.evader_pos, 0.15 ,2*self.radius_nominal)                
+                v = bearing_based_formation_control(self.swarm_poses, self.evader_pos, 0.2 ,2*self.radius_nominal)                
                 v = self.R_dw.apply(v) #transforming velocity in drone frame to world frame
                 vel_world = VelocityWorld()
                 vel_world.vel.x = v[0]
@@ -245,10 +249,15 @@ class Encirclement_Containment(Node):
                 # self.send_position(next_pos)
                 if np.linalg.norm(self.evader_pos)< 1.5*self.radius_nominal:
                     # self.info(f'Velocity commands {self.evader_pos[0:2]}')
+                    # self.encircle_pub.publish(Bool(data=True))
                     self.state = 2
                     self.hover_height = 0.0
                     vel_world = VelocityWorld()
                     self.velocity_pub.publish(vel_world)
+                    time.sleep(self.timer_period)
+                    phase = 2*np.pi*self.all_order.index(self.robot)/self.n_agents
+                    current_pos = np.array([self.radius_nominal*np.cos(phase), self.radius_nominal*np.sin(phase),self.hover_height])
+                    self.send_position(current_pos)
             # Landing state
             elif self.state == 4:
                 self.landing()
@@ -342,6 +351,7 @@ class Encirclement_Containment(Node):
         ''' Callback to receive the order of agents. '''
         # self.info(f"Phase received: {msg.data}")
         order = msg.data
+        self.all_order = msg.data
         self.order = []
         for robot in order:
             if robot == self.robot:
@@ -356,7 +366,6 @@ class Encirclement_Containment(Node):
                     self.leader = order[i-1]
                     self.follower = order[i+1]
             else:
-
                 self.order.append(robot)
             # self.info(f"Leader: {self.leader}, Follower: {self.follower}")
 

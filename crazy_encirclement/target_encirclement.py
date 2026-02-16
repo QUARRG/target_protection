@@ -113,6 +113,7 @@ class CircleDistortion(Node):
             reliability=QoSReliabilityPolicy.BEST_EFFORT,
             deadline=Duration(nanoseconds=int(1e9 / poses_qos_deadline))
         )
+        
         # Subscription to Vicon positions of the robot that are coming from the gps node
         if self.relative:
             self.create_subscription(
