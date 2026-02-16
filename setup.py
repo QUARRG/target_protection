@@ -40,7 +40,8 @@ setup(
             'circle_distortion_baseline_spatial = crazy_encirclement.circle_distortion_baseline_spatial:main',
             'command_center = crazy_encirclement.command_center:main',
             'bearing = crazy_encirclement.bearing:main',
-            'encirclement_containment_baseline = crazy_encirclement.encirclement_containment_baseline:main'
+            'encirclement_containment_baseline = crazy_encirclement.encirclement_containment_baseline:main',
+            'evader = crazy_encirclement.evader:main'
         ],
     },
 )

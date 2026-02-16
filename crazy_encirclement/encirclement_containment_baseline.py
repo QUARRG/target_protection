@@ -131,7 +131,7 @@ class Encirclement_Containment(Node):
         )
         # Subscription to Vicon positions of the robot that are coming from the gps node
         self.create_subscription(
-            NamedPoseArray, 'poses_relative',
+            NamedPoseArray, '/poses_relative',
             self._poses_changed,
             qos_profile
         )
@@ -233,7 +233,7 @@ class Encirclement_Containment(Node):
                     self.info("Lost phase information, returning to hover.")
             
             elif self.state == 3:
-                v = bearing_based_formation_control(self.swarm_poses, self.evader_pos, 0.2 ,2*self.radius_nominal)                
+                v = bearing_based_formation_control(self.swarm_poses, self.evader_pos, 0.15 ,2*self.radius_nominal)                
                 v = self.R_dw.apply(v) #transforming velocity in drone frame to world frame
                 vel_world = VelocityWorld()
                 vel_world.vel.x = v[0]
@@ -243,9 +243,10 @@ class Encirclement_Containment(Node):
                 # next_pos = self.current_pose + v *self.timer_period
                 # next_pos[2] = self.hover_height
                 # self.send_position(next_pos)
-                if np.linalg.norm(self.evader_pos[0:2])< self.radius_nominal:
-                    self.info(f'Velocity commands {self.evader_pos[0:2]}')
+                if np.linalg.norm(self.evader_pos)< 1.5*self.radius_nominal:
+                    # self.info(f'Velocity commands {self.evader_pos[0:2]}')
                     self.state = 2
+                    self.hover_height = 0.0
                     vel_world = VelocityWorld()
                     self.velocity_pub.publish(vel_world)
             # Landing state

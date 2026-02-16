@@ -524,7 +524,7 @@ class FilterUnicycle:
         # x error grows if we have y error while turning (Coriolis)
         # x error grows if we have linear velocity error (xi_v at index 4)
         A[0, 1] = self.angular_speed  # +omega * y
-        A[0, 4] = -1.0                # -1 * (v_hat - v)
+        A[0, 4] = 1.0                 # x_err grows with v_err
         
         # Row 1 (y-error dynamics)
         # y error grows if we have x error while turning (Coriolis)
@@ -534,7 +534,7 @@ class FilterUnicycle:
         
         # Row 2 (theta-error dynamics)
         # theta error grows if we have angular velocity error (xi_omega at index 3)
-        A[2, 3] = -1.0                # -1 * (omega_hat - omega)
+        A[2, 3] = 1.0                 # theta_err grows with omega_err
         
         # Row 3 (omega), 4 (v), 5 (z) are 0 (Random Walk / Constant)
 

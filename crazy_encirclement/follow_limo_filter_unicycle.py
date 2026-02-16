@@ -6,6 +6,7 @@ from geometry_msgs.msg import PoseStamped
 from crazyflie_interfaces.msg import StringArray, Position
 from std_msgs.msg import Bool
 from std_srvs.srv import Empty
+from crazyflie_interfaces.srv import Arm
 from std_msgs.msg import Float32
 from crazy_encirclement.filters import FilterUnicycle
 from crazy_encirclement_interfaces.msg import Metadata
@@ -177,6 +178,13 @@ class FollowUnicycle(Node):
 
         # self.timeHelper.sleep(2.0)
         # input("Press Enter to takeoff")
+        # Arming all drones
+        self.arm_client = self.create_client(Arm, self.robot + '/arm')
+        # Wait until the service is available
+        while not self.arm_client.wait_for_service(timeout_sec=1.0):
+            self.get_logger().info('Service not available, waiting again...')
+        self.arm()
+        time.sleep(2)
         self.timer = self.create_timer(self.timer_period, self.timer_callback)
 
     def timer_callback(self):
@@ -213,9 +221,6 @@ class FollowUnicycle(Node):
                     if self.i_landing < len(self.t_landing)-1:
                         self.i_landing += 1
                     else:
-                        if self.swarm:
-                            self.allcfs.arm(False)
-                            self.timeHelper.sleep(3.0)
                         self.reboot()
                         self.info('Exiting circle node')  
                         self.destroy_node()
@@ -346,7 +351,23 @@ class FollowUnicycle(Node):
         ''' Reboot the system. '''
         req = Empty.Request()
         self.reboot_client.call_async(req)
-        time.sleep(1.0)    
+        time.sleep(3.0)  
+
+    def arm(self):
+        ''' Reboot the system. '''
+        req = Arm.Request()
+        req.arm = True
+        self.arm_client.call_async(req)
+        # Call the service and get the response asynchronously
+        future = self.arm_client.call_async(req)
+        # Wait for the result and handle the response
+        rclpy.spin_until_future_complete(self, future)
+
+        # Now handle the response
+        if future.result() is not None:
+            self.get_logger().info(f'Service call successful, response: {future.result()}')
+        else:
+            self.get_logger().error('Service call failed')  
 
     def send_position(self, r):
         ''' Send position command to the crazyflie. '''
@@ -388,10 +409,9 @@ class FollowUnicycle(Node):
 
 
 def main():
-    swarm = Crazyswarm()
-    if not rclpy.ok():
-        rclpy.init()
-    follower = FollowUnicycle(swarm)
+
+    rclpy.init()
+    follower = FollowUnicycle()
     rclpy.spin(follower)
     follower.destroy_node()
     rclpy.shutdown()

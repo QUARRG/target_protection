@@ -99,7 +99,7 @@ class MocapRelative(Node):
                     qw = pose.pose.orientation.w
                     self.R_wc = R.from_quat([qx, qy, qz, qw])
                     self.R_cw = self.R_wc.inv()
-                elif pose.name == self.evader:
+                if pose.name == self.evader:
                     self.relative_poses.poses.append(pose)
 
             # Getting relative poses of other robots with respect to ego
