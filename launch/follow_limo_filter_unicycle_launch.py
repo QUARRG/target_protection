@@ -102,6 +102,7 @@ def parse_yaml(context):
 
     # Listing all enabled robots
     robots_list = [robot for robot in crazyflies['robots'] if crazyflies['robots'][robot]['enabled']]
+    setpoint = [0., 0., 0.3]
     # selected_drone = 'C24'
     # robots_list = [selected_drone] if selected_drone in robots_list else robots_list
 
@@ -112,7 +113,7 @@ def parse_yaml(context):
             executable='follow_limo_filter_unicycle',
             name=robot+'_follow_limo_filter_unicycle',
             output='screen',
-            parameters=[{'robot': robot, 'relative': relative} | filter_yaml_content.get('FilterUnicycle', {})]
+            parameters=[{'robot': robot, 'setpoint': setpoint} | filter_yaml_content.get('FilterUnicycle', {})]
         ))
 
         # GPS/Scanner II Node for each robot

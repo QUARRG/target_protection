@@ -8,12 +8,11 @@ from std_msgs.msg import Bool
 from std_srvs.srv import Empty
 from crazyflie_interfaces.srv import Arm
 from std_msgs.msg import Float32
-from crazy_encirclement.filters import FilterUnicycle
+from crazy_encirclement.filters import FilterUnicycle, wrap_to_pi
 from crazy_encirclement_interfaces.msg import Metadata
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy, QoSDurabilityPolicy, QoSPresetProfiles
 from motion_capture_tracking_interfaces.msg import NamedPoseArray
 from rclpy.duration import Duration
-from crazyflie_py import Crazyswarm
 from scipy.spatial.transform import Rotation as R
 
 
@@ -31,14 +30,14 @@ class FollowUnicycle(Node):
         # Parameters
         self.declare_parameter('robot', 'C20')
         self.declare_parameter('hover_height', 0.3)
-        self.declare_parameter('relative', False)
         self.declare_parameter('number_of_agents', 4)
         self.declare_parameter('k_phi', 1.0)
         self.declare_parameter('frame_id', 'world')
+        self.declare_parameter('setpoint', [0., 0., 0.3])
 
         self.robot = str(self.get_parameter('robot').value)
         self.hover_height = float(self.get_parameter('hover_height').value)
-        self.relative = bool(self.get_parameter('relative').value)
+        self.setpoint = np.array(self.get_parameter('setpoint').value)
         self.n_agents = int(self.get_parameter('number_of_agents').value)
         self.k_phi    = float(self.get_parameter('k_phi').value)
         self.frame_id = str(self.get_parameter('frame_id').value)
@@ -74,7 +73,6 @@ class FollowUnicycle(Node):
         self.T_init  = np.eye(4)
         self.T_final = np.eye(4)
         self.T_curr  = np.eye(4)
-        self.set_point = np.array([0., 0., 0.3])  # Offset from LIMO position
 
         self.i_landing = 0
         self.i_takeoff = 0
@@ -144,7 +142,10 @@ class FollowUnicycle(Node):
         # Initial states
         x_init = self.LIMO_pose.pose.position.x + initialization_noise[0]
         y_init = self.LIMO_pose.pose.position.y + initialization_noise[1]
-        heading_init = np.arctan2(self.LIMO_pose.pose.position.y - self.T_init[1, 3], self.LIMO_pose.pose.position.x - self.T_init[0, 3]) + initialization_noise[2]
+        rotation = R.from_quat([self.LIMO_pose.pose.orientation.x, self.LIMO_pose.pose.orientation.y,
+                                self.LIMO_pose.pose.orientation.z, self.LIMO_pose.pose.orientation.w])
+        heading_init = wrap_to_pi(rotation.as_euler('zyx')[0] + initialization_noise[2])
+        # heading_init = np.arctan2(self.LIMO_pose.pose.position.y - self.T_init[1, 3], self.LIMO_pose.pose.position.x - self.T_init[0, 3]) + initialization_noise[2]
         angular_speed_init = 0.0 + initialization_noise[3]
         linear_speed_init = 0.0 + initialization_noise[4]
         z_ground_init = self.LIMO_pose.pose.position.z + initialization_noise[5]
@@ -164,6 +165,9 @@ class FollowUnicycle(Node):
         
         # Crazyflie position command publisher
         self.position_pub = self.create_publisher(Position, f'/{self.robot}/cmd_position', 10)
+
+        # Timer of the main loop
+        self.timer = self.create_timer(self.timer_period, self.timer_callback)
         
         # Arming all drones
         if swarm:
@@ -176,8 +180,6 @@ class FollowUnicycle(Node):
                 self.timeHelper.sleep(1.0)
                 self.info(f'arming drone{cf}')
 
-        # self.timeHelper.sleep(2.0)
-        # input("Press Enter to takeoff")
         # Arming all drones
         self.arm_client = self.create_client(Arm, self.robot + '/arm')
         # Wait until the service is available
@@ -185,7 +187,6 @@ class FollowUnicycle(Node):
             self.get_logger().info('Service not available, waiting again...')
         self.arm()
         time.sleep(2)
-        self.timer = self.create_timer(self.timer_period, self.timer_callback)
 
     def timer_callback(self):
         ''' Timer callback to send position commands to the crazyflie based on the current state. '''
@@ -207,7 +208,7 @@ class FollowUnicycle(Node):
                 
                 # Adding set point offset to the predicted position considering the limo frame (not world frame)
                 limo_3d_rotation = R.from_euler('z', limo_states['heading']).as_matrix()
-                projected_set_point = limo_3d_rotation @ self.set_point
+                projected_set_point = limo_3d_rotation @ self.setpoint
                 limo_3d_position += projected_set_point
 
                 # Desired position in the Vicon frame
@@ -216,15 +217,14 @@ class FollowUnicycle(Node):
 
             # Landing state
             elif self.state == 3:
-                if self.has_final:
-                    self.landing()
-                    if self.i_landing < len(self.t_landing)-1:
-                        self.i_landing += 1
-                    else:
-                        self.reboot()
-                        self.info('Exiting circle node')  
-                        self.destroy_node()
-                        rclpy.shutdown()   
+                self.landing()
+                if self.i_landing < len(self.t_landing)-1:
+                    self.i_landing += 1
+                else:
+                    self.reboot()
+                    self.info('Exiting node')  
+                    self.destroy_node()
+                    rclpy.shutdown()   
 
         except KeyboardInterrupt:
             self.info('Exiting open loop command node')
@@ -251,12 +251,10 @@ class FollowUnicycle(Node):
             to the crazyflie. All steps based on the Vicon position.
         """
         # Initialize the initial pose and phase if not already set using vicon data
-        # self.info(f"poses: {msg}")
         for robot_pose in msg.poses:
             
             if robot_pose.name == self.robot:
                 # Update current pose
-                # if not self.land_flag:
                 self.T_curr[0, 3] = robot_pose.pose.position.x
                 self.T_curr[1, 3] = robot_pose.pose.position.y
                 self.T_curr[2, 3] = robot_pose.pose.position.z
@@ -270,28 +268,12 @@ class FollowUnicycle(Node):
                     # Difference between current and initial positions (ignoring orientation)
                     position_diff = np.linalg.norm(self.T_init[0:3, 3] - self.T_curr[0:3, 3])
                     self.info(f'Position difference: {position_diff:.3f} m')
-                    # self.T_final = self.T_curr.copy()
-                    # self.T_final[0:3, 3] += np.array([0.25, 0.25, 0.0])
-                    # self.info("Landing...")
-                    # self.landing_traj(3)
-                    # self.has_final = True
 
                     if position_diff < self.hover_height * 1.05:  # Threshold of 0.1 meters
                         self.T_final = self.T_curr.copy()
                         self.info("Landing...")
                         self.landing_traj(3)
                         self.has_final = True
-                        # self.T_final = np.eye(4)
-                        # self.T_final[0, 3] = robot_pose.pose.position.x
-                        # self.T_final[1, 3] = robot_pose.pose.position.y
-                        # self.T_final[2, 3] = robot_pose.pose.position.z
-                        # rotation = R.from_quat([robot_pose.pose.orientation.x, robot_pose.pose.orientation.y,
-                        #                         robot_pose.pose.orientation.z, robot_pose.pose.orientation.w])
-                        # R_mat = rotation.as_matrix()
-                        # self.T_final[0:3, 0:3] = R_mat
-                        # self.info("Landing...")
-                        # self.landing_traj(3)
-                        # self.has_final = True
                     else:
                         self.send_position(np.array([self.T_init[0, 3], self.T_init[1, 3], self.T_init[2, 3] + self.hover_height]))
 
