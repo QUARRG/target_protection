@@ -101,19 +101,20 @@ def parse_yaml(context):
         filter_yaml_content = yaml.safe_load(ymlfile)
 
     # Listing all enabled robots
-    robots_list = [robot for robot in crazyflies['robots'] if crazyflies['robots'][robot]['enabled']]
-    setpoint = [0., 0., 0.3]
+    # robots_list = [robot for robot in crazyflies['robots'] if crazyflies['robots'][robot]['enabled']]
+    setpoint = [[0., 0., 0.3], [0., 0.3, 0.3], [0., -0.3, 0.3]]
+    robots = ['C23', 'C24', 'C25']
     # selected_drone = 'C24'
     # robots_list = [selected_drone] if selected_drone in robots_list else robots_list
 
-    for robot in robots_list:
+    for robot, sp in zip(robots, setpoint):
         # Nodes for each robot
         Nodes.append(Node(
             package='crazy_encirclement',
             executable='follow_limo_filter_unicycle',
             name=robot+'_follow_limo_filter_unicycle',
             output='screen',
-            parameters=[{'robot': robot, 'setpoint': setpoint} | filter_yaml_content.get('FilterUnicycle', {})]
+            parameters=[{'robot': robot, 'setpoint': sp} | filter_yaml_content.get('FilterUnicycle', {})]
         ))
 
         # GPS/Scanner II Node for each robot
@@ -174,7 +175,3 @@ def generate_launch_description():
             }]
         ),
     ])
-
-# Example commands to run the launch file or node with parameters and remapping:
-#   ros2 launch crazy_encirclement <launch_file>.launch.py --ros-args -p robot:=C05 --remap /old_topic:=/new_topic
-#   ros2 run crazy_encirclement encirclement --ros-args -p robot:='C05' --remap /encirclement:=/C05/encirclement

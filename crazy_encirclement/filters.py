@@ -487,20 +487,35 @@ class FilterUnicycle:
         is_stopped = abs(self.linear_speed) < self.zupt_threshold
 
         if is_stopped:
-            # 1. Force velocity to zero
-            self.linear_speed = 0.0
-            self.angular_speed = 0.0
+            # --- 1. STATE CLAMPING ---
+            # STOP the linear drift. 
+            # If we don't do this, position = position + v * dt will drift forever.
+            self.linear_speed = 0.0 
             
-            # 2. Freeze Covariance
-            # We must treat the kinematic parameters as "Fixed Constants" (Zero Noise)
+            # DO NOT clamp angular_speed. 
+            # The robot might be turning, we just can't see it.
+            # self.angular_speed = ... (Leave as is)
+
+            # --- 2. COVARIANCE MANIPULATION ---
             current_Q = np.zeros_like(self.Q)
             
-            # Allow small position noise for GPS corrections
-            current_Q[0,0] = self.Q[0,0] # x
-            current_Q[1,1] = self.Q[1,1] # y
-            current_Q[5,5] = self.Q[5,5] # z_ground
+            # A. FREEZE Position & Ground (We know it's not translating)
+            # 1e-6 allows tiny adjustments for VIO drift, but stops jumpiness.
+            current_Q[0,0] = 1e-6 
+            current_Q[1,1] = 1e-6 
+            current_Q[5,5] = 1e-6 
+
+            # B. WAKE UP Velocity
+            # We forced v=0 above, but we keep noise non-zero so the filter 
+            # stays "awake" to detect when the car accelerates again.
+            current_Q[4,4] = 1e-4 
+
+            # C. INFLATE Heading & Omega
+            # We admit we don't know the heading because we can't observe rotation.
+            # This makes P_theta grow large, so when we move again, it snaps quickly.
+            current_Q[2,2] = 1.0 
+            current_Q[3,3] = 1.0 
             
-            # IMPORTANT: theta(2), omega(3), v(4) must have 0.0 noise
         else:
             current_Q = self.Q
         # --- ZUPT LOGIC END ---
