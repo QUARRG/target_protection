@@ -36,6 +36,7 @@ setup(
             'motion_capture_tracking_relative = crazy_encirclement.motion_capture_tracking_relative:main',
             'follow_limo = crazy_encirclement.follow_limo:main',
             'follow_limo_filter_unicycle = crazy_encirclement.follow_limo_filter_unicycle:main',
+            'follow_limo_encirclement_filter_unicycle = crazy_encirclement.follow_limo_encirclement_filter_unicycle:main',
             'target_encirclement= crazy_encirclement.target_encirclement:main',
             'circle_distortion_baseline_spatial = crazy_encirclement.circle_distortion_baseline_spatial:main',
             'command_center = crazy_encirclement.command_center:main',

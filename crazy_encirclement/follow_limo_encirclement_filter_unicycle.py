@@ -8,7 +8,7 @@ from std_msgs.msg import Bool
 from std_srvs.srv import Empty
 from crazyflie_interfaces.srv import Arm
 from std_msgs.msg import Float32
-from crazy_encirclement.filters import FilterUnicycle, wrap_to_pi
+from crazy_encirclement.filters import FilterUnicycle, FilterRelativeII, wrap_to_pi
 from crazy_encirclement_interfaces.msg import Metadata
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy, QoSDurabilityPolicy, QoSPresetProfiles
 from motion_capture_tracking_interfaces.msg import NamedPoseArray
@@ -16,36 +16,41 @@ from rclpy.duration import Duration
 from scipy.spatial.transform import Rotation as R
 
 
-class FollowUnicycle(Node):
-    def __init__(self, swarm=None):
+class FollowUnicycleEncirclement(Node):
+    def __init__(self):
         """
             Node that sends the crazyflie to a desired position
             The desired position comes from the distortion of a circle
         """
-        super().__init__('follow_unicycle')
-        self.swarm = swarm
+        super().__init__('follow_unicycle_encirclement')
         self.info = self.get_logger().info
-        self.info('Follow unicycle node has been started.')
 
-        # Parameters
+        # Other Parameters
         self.declare_parameter('robot', 'C20')
-        self.declare_parameter('hover_height', 0.3)
         self.declare_parameter('number_of_agents', 4)
+        self.declare_parameter('hover_height', 0.3)
+        self.declare_parameter('radius_nominal', 0.5)
+        self.declare_parameter('omega_nominal', 0.5)
         self.declare_parameter('k_phi', 1.0)
         self.declare_parameter('frame_id', 'world')
-        self.declare_parameter('setpoint', [0., 0., 0.3])
 
-        self.robot = str(self.get_parameter('robot').value)
-        self.hover_height = float(self.get_parameter('hover_height').value)
-        self.setpoint = np.array(self.get_parameter('setpoint').value)
-        self.n_agents = int(self.get_parameter('number_of_agents').value)
-        self.k_phi    = float(self.get_parameter('k_phi').value)
-        self.frame_id = str(self.get_parameter('frame_id').value)
+        self.robot          = str(self.get_parameter('robot').value)
+        self.hover_height   = float(self.get_parameter('hover_height').value)
+        self.radius_nominal = float(self.get_parameter('radius_nominal').value)
+        self.omega_nominal  = float(self.get_parameter('omega_nominal').value)
+        self.n_agents       = int(self.get_parameter('number_of_agents').value)
+        self.k_phi          = float(self.get_parameter('k_phi').value)
+        self.frame_id       = str(self.get_parameter('frame_id').value)
 
-        # Filter parameters
+        # Filters parameters
         self.declare_parameter('P', [1.0, 1.0, 0.15, 0.5, 0.2])
         self.declare_parameter('Q', [0.1, 0.1, 0.01, 0.05, 0.1])
         self.declare_parameter('V', [0.1, 0.1, 0.1])
+
+        self.declare_parameter('P_rel', [0.1, 0.1])
+        self.declare_parameter('Q_rel', [0.01, 0.01])
+        self.declare_parameter('V_rel', [0.1, 0.1])
+
         self.declare_parameter('predict_hz', 50.0)
         self.declare_parameter('update_hz', 10.0)
         self.declare_parameter('seed', 42)        
@@ -55,9 +60,15 @@ class FollowUnicycle(Node):
         self.P_list = self.get_parameter('P').value
         self.Q_list = self.get_parameter('Q').value
         self.V_list = self.get_parameter('V').value
+
+        self.P_rel_list = self.get_parameter('P_rel').value
+        self.Q_rel_list = self.get_parameter('Q_rel').value
+        self.V_rel_list = self.get_parameter('V_rel').value
+
         self.predict_hz = self.get_parameter('predict_hz').value
         self.update_hz  = self.get_parameter('update_hz').value
         self.zupt_threshold = self.get_parameter('zupt_threshold').value
+
         # Set random seed
         seed = self.get_parameter('seed').value
         np.random.seed(seed)
@@ -70,10 +81,14 @@ class FollowUnicycle(Node):
         self.has_initial_pose = False
         self.has_final = False
         self.land_flag = False
+        self.has_order = False
 
         self.T_init  = np.eye(4)
         self.T_final = np.eye(4)
         self.T_curr  = np.eye(4)
+
+        self.leader   = None
+        self.follower = None
 
         self.i_landing = 0
         self.i_takeoff = 0
@@ -95,6 +110,11 @@ class FollowUnicycle(Node):
             '/encircle',
             self._encircle_callback,
             10)
+        
+        self.create_subscription(
+            StringArray, '/agents_order',
+            self._order_callback,
+            10)  
         
         # Subscribe to motion capture poses
         qos_profile = QoSProfile(reliability =QoSReliabilityPolicy.BEST_EFFORT,
@@ -119,9 +139,9 @@ class FollowUnicycle(Node):
             self._initial_pose_callback,
             initial_pose_qos
         )
-        
-        # Wait until initial pose is received
-        while (not self.has_initial_pose):
+
+        # Wait until order and initial pose are received
+        while (not self.has_order and not self.has_initial_pose):
             rclpy.spin_once(self, timeout_sec=0.1)
 
         # Subscribe to gps scanner topic to update filter with measurements
@@ -132,12 +152,14 @@ class FollowUnicycle(Node):
             10
         )
         
-        self.LIMO_pose = None
-        # Wait until LIMO pose has arrived
-        while (self.LIMO_pose is None):
+        # Wait until relative poses have arrived
+        self.LIMO_pose     = None
+        self.FOLLOWER_pose = None
+        self.LEADER_pose   = None
+        while (self.LIMO_pose is None and self.FOLLOWER_pose is None and self.LEADER_pose is None):
             rclpy.spin_once(self, timeout_sec=0.1)
 
-        # Initial noise using P 
+        # Initializing filter Unicycle
         initialization_noise = np.random.multivariate_normal(np.zeros(len(self.P_list)), np.diag(np.square(self.P_list)))
 
         # Initial states
@@ -148,11 +170,10 @@ class FollowUnicycle(Node):
         heading_init = wrap_to_pi(rotation.as_euler('zyx')[0] + initialization_noise[2])
         # heading_init = np.arctan2(self.LIMO_pose.pose.position.y - self.T_init[1, 3], self.LIMO_pose.pose.position.x - self.T_init[0, 3]) + initialization_noise[2]
         angular_speed_init = 0.0 + initialization_noise[3]
-        linear_speed_init = 0.0 + initialization_noise[4]
-        z_ground_init = self.LIMO_pose.pose.position.z + initialization_noise[5]
+        linear_speed_init  = 0.0 + initialization_noise[4]
+        z_ground_init      = self.LIMO_pose.pose.position.z + initialization_noise[5]
 
-        # Create filter instance using actual measured initial values
-        self.filter = {
+        self.filter_unicycle_params = {
             'P': self.P_list,
             'Q': self.Q_list,
             'V': self.V_list,
@@ -160,10 +181,34 @@ class FollowUnicycle(Node):
             'heading_guess': heading_init,
             'angular_speed_guess': angular_speed_init,
             'linear_speed_guess': linear_speed_init,
-            'z_ground_guess': z_ground_init,
-            'zupt_threshold': self.zupt_threshold
+            'z_ground_guess': z_ground_init
         }
-        self.filter = FilterUnicycle(self.robot, self.filter, self)
+        self.filter_unicycle = FilterUnicycle(self.robot, self.filter_unicycle_params, self)
+
+        # Initializing filter relative
+        initialization_noise_rel = np.random.multivariate_normal(np.zeros(len(self.P_rel_list)), np.diag(np.square(self.P_rel_list)))
+
+        rotation_leader = R.from_quat([self.LEADER_pose.pose.orientation.x, self.LEADER_pose.pose.orientation.y,
+                                       self.LEADER_pose.pose.orientation.z, self.LEADER_pose.pose.orientation.w])
+        heading_leader_init = rotation_leader.as_euler('zyx')[0]
+
+        rotation_follower = R.from_quat([self.FOLLOWER_pose.pose.orientation.x, self.FOLLOWER_pose.pose.orientation.y,
+                                         self.FOLLOWER_pose.pose.orientation.z, self.FOLLOWER_pose.pose.orientation.w])
+        heading_follower_init = rotation_follower.as_euler('zyx')[0]
+
+        heading_ego_init = rotation.as_euler('zyx')[0]
+
+        delta_phi_succ_init = wrap_to_pi((heading_leader_init - heading_ego_init) + initialization_noise_rel[0])
+        delta_phi_pred_init = wrap_to_pi((heading_follower_init - heading_ego_init) + initialization_noise_rel[1])
+
+        self.filter_relative_params = {
+            'P': self.P_rel_list,
+            'Q': self.Q_rel_list,
+            'V': self.V_rel_list,
+            'delta_phi_pred_guess': delta_phi_pred_init,
+            'delta_phi_succ_guess': delta_phi_succ_init
+        }
+        self.filter_relative = FilterRelativeII(self.robot, self.filter_relative_params, self)
         
         # Crazyflie position command publisher
         self.position_pub = self.create_publisher(Position, f'/{self.robot}/cmd_position', 10)
@@ -172,23 +217,14 @@ class FollowUnicycle(Node):
         self.timer = self.create_timer(self.timer_period, self.timer_callback)
         
         # Arming all drones
-        if swarm:
-            self.timeHelper = self.swarm.timeHelper
-            self.allcfs = self.swarm.allcfs
-
-            # arm (one by one)
-            for cf in self.allcfs.crazyflies:
-                cf.arm(True)
-                self.timeHelper.sleep(1.0)
-                self.info(f'arming drone{cf}')
-
-        # Arming all drones
         self.arm_client = self.create_client(Arm, self.robot + '/arm')
         # Wait until the service is available
         while not self.arm_client.wait_for_service(timeout_sec=1.0):
             self.get_logger().info('Service not available, waiting again...')
         self.arm()
         time.sleep(2)
+
+        self.info('Follow unicycle encirclement node has been started.')
 
     def timer_callback(self):
         ''' Timer callback to send position commands to the crazyflie based on the current state. '''
@@ -204,17 +240,50 @@ class FollowUnicycle(Node):
 
             # Following LIMO
             elif self.state == 2:
-                # Predicted LIMO states
-                limo_states: dict = self.filter.predict(self.timer_period)
-                limo_3d_position = np.array([*limo_states['position'], limo_states['z_ground']])
+
+                # --- A. ESTIMATION ---
+                # 1. Get Unicycle Center (Global)
+                limo_state = self.filter_unicycle.predict(self.timer_period)
+                center_pos = np.array(limo_state['position']) 
+                center_z   = limo_state['z_ground']
+
+                # 2. Get Phase Errors (Filter 2)
+                # These are the angular gaps to your neighbors
+                d_phis = self.filter_relative.x 
+                d_phi_pred, d_phi_succ = d_phis['pred'], d_phis['succ']
                 
-                # Adding set point offset to the predicted position considering the limo frame (not world frame)
-                limo_3d_rotation = R.from_euler('z', limo_states['heading']).as_matrix()
-                projected_set_point = limo_3d_rotation @ self.setpoint
-                limo_3d_position += projected_set_point
+                # --- B. CONTROL ---
+                # 3. Compute Correction Gain
+                # Goal: Make gaps equal (sum of signed errors = 0)
+                phase_error = (d_phi_pred + d_phi_succ)
+                u_correction = self.k_phi * phase_error
+
+                # 4. INTEGRATE Virtual Phase (The "Motion" Step)
+                # Initialize alpha if first run
+                if self.alpha is None:
+                    # Start at current angle relative to car
+                    curr_pos = self.T_curr[0:2, 3] 
+                    self.alpha = np.arctan2(curr_pos[1] - center_pos[1], 
+                                            curr_pos[0] - center_pos[0])
+
+                # Update the angle: Nominal Orbit + Feedback Correction
+                # This replaces the "Rc @ exp(omega)" logic from the old filter
+                rotation_speed = self.omega_nominal + u_correction
+                self.alpha += rotation_speed * self.timer_period
+                
+                # Wrap to [-pi, pi]
+                self.alpha = wrap_to_pi(self.alpha)
+
+                # --- C. TRAJECTORY GENERATION ---
+                # 5. Polar -> Cartesian (Global Frame)
+                # This generates the moving setpoint on the circle
+                x_des = center_pos[0] + self.radius_nominal * np.cos(self.alpha)
+                y_des = center_pos[1] + self.radius_nominal * np.sin(self.alpha)
+                z_des = center_z      + self.hover_height
+                p_des = np.array([x_des, y_des, z_des])
 
                 # Desired position in the Vicon frame
-                r_des = self._get_desired_position(limo_3d_position)   
+                r_des = self._get_desired_position(p_des)   
                 self.send_position(r_des)
 
             # Landing state
@@ -238,14 +307,30 @@ class FollowUnicycle(Node):
             if 'limo' in pose.name.lower():
                 # Relative pose of LIMO in the current robot frame
                 self.LIMO_pose = pose
+            if pose.name == self.follower:
+                # Relative pose of the follower in the current robot frame
+                self.FOLLOWER_pose = pose
+            if pose.name == self.leader:
+                # Relative pose of the leader in the current robot frame
+                self.LEADER_pose = pose
 
-        # Update filter with new measurement
-        if self.LIMO_pose is not None and self.state == 2:
-            measurement = np.array([self.LIMO_pose.pose.position.x, self.LIMO_pose.pose.position.y, self.LIMO_pose.pose.position.z])
+        # Update filter unicycle with new measurement
+        if self.LIMO_pose is not None and \
+            self.FOLLOWER_pose is not None and \
+            self.LEADER_pose is not None and \
+            self.state == 2:
+
+            measurement_limo = np.array([self.LIMO_pose.pose.position.x, self.LIMO_pose.pose.position.y, self.LIMO_pose.pose.position.z])
+            measurement_pred = np.array([self.FOLLOWER_pose.pose.position.x, self.FOLLOWER_pose.pose.position.y, self.FOLLOWER_pose.pose.position.z])
+            measurement_succ = np.array([self.LEADER_pose.pose.position.x, self.LEADER_pose.pose.position.y, self.LEADER_pose.pose.position.z])
 
             # Current pose in the initial frame
             T_curr_robot = np.linalg.inv(self.T_init) @ self.T_curr
-            self.filter.update(measurement, T_curr_robot[0:3, 0:3], T_curr_robot[0:3, 3])
+            self.filter_unicycle.update(measurement_limo, T_curr_robot[0:3, 0:3], T_curr_robot[0:3, 3])
+            
+            # Current pose in the initial frame
+            T_curr_robot = np.linalg.inv(self.T_init) @ self.T_curr
+            self.filter_relative.update(measurement_pred, measurement_succ, T_curr_robot[0:3, 0:3], T_curr_robot[0:3, 3])
 
     def _poses_changed(self, msg):
         """ Topic update callback to the motion capture lib's
@@ -269,7 +354,7 @@ class FollowUnicycle(Node):
                 if (self.has_final == False) and (self.land_flag == True):
                     # Difference between current and initial positions (ignoring orientation)
                     position_diff = np.linalg.norm(self.T_init[0:3, 3] - self.T_curr[0:3, 3])
-                    self.info(f'Position difference: {position_diff:.3f} m')
+                    # self.info(f'Position difference: {position_diff:.3f} m')
 
                     if position_diff < self.hover_height * 1.05:  # Threshold of 0.1 meters
                         self.T_final = self.T_curr.copy()
@@ -278,6 +363,25 @@ class FollowUnicycle(Node):
                         self.has_final = True
                     else:
                         self.send_position(np.array([self.T_init[0, 3], self.T_init[1, 3], self.T_init[2, 3] + self.hover_height]))
+
+    def _order_callback(self, msg: StringArray):
+        ''' Callback to receive the order of agents. '''
+        if not self.has_order:
+            # self.info(f"Phase received: {msg.data}")
+            order = msg.data
+            for robot in order:
+                if robot == self.robot:
+                    i = order.index(robot)
+                    if i == 0:
+                        self.leader = order[self.n_agents-1]
+                        self.follower = order[i+1]
+                    elif i == (self.n_agents-1):
+                        self.leader = order[i-1]
+                        self.follower = order[0]
+                    else:
+                        self.leader = order[i-1]
+                        self.follower = order[i+1]
+            self.has_order = True
 
     def takeoff(self):
         ''' Take-off procedure to reach the hover height. '''
@@ -393,9 +497,8 @@ class FollowUnicycle(Node):
 
 
 def main():
-
     rclpy.init()
-    follower = FollowUnicycle()
+    follower = FollowUnicycleEncirclement()
     rclpy.spin(follower)
     follower.destroy_node()
     rclpy.shutdown()

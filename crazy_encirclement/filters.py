@@ -690,6 +690,140 @@ class FilterUnicycle:
         return np.array([[c, -s], [s, c]])
 
 
+class FilterRelativeII:
+    ''' 
+    Estimates the phase difference to Predecessor and Successor.
+    State: [d_phi_pred, d_phi_succ]
+    '''
+    def __init__(self, name: str, params: dict, node: Node):
+        self.name = name
+        self.params = params
+        self.node = node
+
+        self.dim_state: int = 2
+        self.dim_meas: int = 2
+
+        # 1. Initialize State: [delta_phi_pred, delta_phi_succ]
+        # Initial guess: 0.0 or a specific nominal separation (e.g., 2pi/N)
+        self.x: np.ndarray = np.array(self.params.get('x_guess', [0.0, 0.0]), dtype=float)
+
+        # 2. Kalman Matrices
+        # P: Covariance
+        self.P: np.ndarray = np.diag(np.square(self.params.get('P_rel', np.ones(self.dim_state) * 0.1)))
+        
+        # Q: Process Noise (State uncertainty growth)
+        # Small value allows the estimate to change slowly if formation shifts
+        self.Q: np.ndarray = np.diag(np.square(self.params.get('Q_rel', np.ones(self.dim_state) * 0.01)))
+        
+        # R: Measurement Noise
+        # Trust in the camera/UWB measurements
+        self.V: np.ndarray = np.diag(np.square(self.params.get('V_rel', np.ones(self.dim_meas) * 0.1)))
+
+        self.I = np.eye(2)
+
+    def predict(self, dt: float):
+        ''' 
+        Prediction Step:
+        Model: Constant Relative Phase (d_phi_dot = 0)
+        We assume nominal speed is identical for all agents, so separation is constant.
+        '''
+        # State: x_k = x_{k-1} (No change)
+        
+        # Covariance: P = P + Q * dt
+        self.P = self.P + self.Q * dt
+        
+        return self.get_state()
+
+    def update(self, 
+               vec_rel_ego_to_limo: np.ndarray, 
+               vec_rel_ego_to_pred: np.ndarray, 
+               vec_rel_ego_to_succ: np.ndarray,
+               R_drone: np.ndarray,
+               p_drone: np.ndarray):
+        '''
+        Update Step using geometric measurements.
+        
+        Args:
+            vec_rel_ego_to_limo: Vector from Ego to Limo (BODY FRAME)
+            vec_rel_ego_to_pred: Vector from Ego to Predecessor (BODY FRAME)
+            vec_rel_ego_to_succ: Vector from Ego to Successor (BODY FRAME)
+        '''
+        # Transform relative vectors to Global Frame
+        vec_ego_to_limo = R_drone @ vec_rel_ego_to_limo + p_drone
+        vec_ego_to_pred = R_drone @ vec_rel_ego_to_pred + p_drone
+        vec_ego_to_succ = R_drone @ vec_rel_ego_to_succ + p_drone
+
+        # 1. Prepare Measurement Vector
+        z_meas = []
+        
+        # --- Predecessor Logic ---
+        # Vector Center -> Ego
+        v_radius_ego = -vec_ego_to_limo
+        
+        # Vector Center -> Pred
+        # (Ego->Pred) - (Ego->Limo) = (Pred - Ego) - (Limo - Ego) = Pred - Limo
+        v_radius_pred = vec_ego_to_pred - vec_ego_to_limo
+        
+        # Calculate Signed Angle
+        meas_pred = self._get_signed_angle(v_radius_ego, v_radius_pred)
+        
+        z_meas.append(meas_pred)
+
+        # --- Successor Logic ---
+        v_radius_ego = -vec_ego_to_limo
+        v_radius_succ = vec_ego_to_succ - vec_ego_to_limo
+        
+        meas_succ = self._get_signed_angle(v_radius_ego, v_radius_succ)
+        
+        z_meas.append(meas_succ)
+
+        # 2. Construct Matrices for Variable Dimension Update
+        z = np.array(z_meas)
+        H = self.I
+        R = self.V
+        
+        # 3. Kalman Gain
+        # S = H P H^T + R
+        S = H @ self.P @ H.T + R
+        try:
+            K = self.P @ H.T @ np.linalg.inv(S)
+        except np.linalg.LinAlgError:
+            return self.get_state()
+
+        # 4. Innovation (Measurement Residual)
+        y = z - (H @ self.x)
+        
+        # WRAPPING: Since we are dealing with angles, we need to wrap the innovation to [-pi, pi]
+        for i in range(len(y)):
+            y[i] = wrap_to_pi(y[i])
+
+        # 5. Update State
+        self.x = self.x + K @ y
+        
+        # Wrap final state
+        self.x[0] = wrap_to_pi(self.x[0])
+        self.x[1] = wrap_to_pi(self.x[1])
+
+        # 6. Update Covariance
+        I_KH = self.I - K @ H
+        self.P = I_KH @ self.P @ I_KH.T + K @ R @ K.T
+        self.P = 0.5 * (self.P + self.P.T)  # Ensure symmetry
+
+    def _get_signed_angle(self, v1, v2):
+        ''' Returns angle from v1 to v2 in 2D plane. '''
+        # Cross product (2D): x1*y2 - y1*x2
+        cross = v1[0]*v2[1] - v1[1]*v2[0]
+        # Dot product
+        dot   = v1[0]*v2[0] + v1[1]*v2[1]
+        return np.arctan2(cross, dot)
+    
+    def get_state(self) -> dict:
+        return {
+            'pred': self.x[0],
+            'succ': self.x[1],
+        }
+
+
 class FilterSpatial(BaseFilter):
     ''' LIEKF for 3D encirclement using adjoint transformations with y-axis rotation.
         Always uses modelE (identity embedding) and applies spatial rotation via adjoint.
@@ -1047,8 +1181,6 @@ class FilterSpatialBaseline:
         return current_pose_msg, desired_pose_msg, phase_msg, radius_msg
 
 
-# ----------------------------------------------------------------------
-
 class Baseline3DFilter(BaseFilter):
     ''' Baseline filter without state estimation for encirclement tasks.
     '''
@@ -1138,3 +1270,5 @@ class Baseline3DFilter(BaseFilter):
         self.pub_gain.publish(gain_msg)
 
         return phase_msg_test, desired_pose_msg
+    
+# ----------------------------------------------------------------------
