@@ -27,7 +27,7 @@ class Evader(Node):
         self.declare_parameter('hover_height', 0.8)
         self.declare_parameter('frame_id', 'world')
         self.declare_parameter('target', 'LIMO')
-        self.declare_parameter('trajectory','straight')
+        self.declare_parameter('trajectory','follow_limo')
 
         self.robot    = str(self.get_parameter('robot').value)
         self.hover_height = float(self.get_parameter('hover_height').value)
@@ -40,6 +40,17 @@ class Evader(Node):
 
         # Flags and variables
         self.timer_period = 0.01
+        if self.trajectory == 'eight':
+            A = 0.8      # amplitude
+            w = 0.5      # frequency
+            t_end = 20   # total time
+            dt = 0.01    # time step
+
+            # Time vector
+            self.t = np.arange(0, t_end, self.timer_period)
+            self.x = A*np.cos(w*self.t)
+            self.y = A*np.sin(w*self.t)*np.cos(w*self.t)
+            self.index = 0
         self.initial_pose = np.zeros(3)
         self.order = []
 
@@ -123,9 +134,15 @@ class Evader(Node):
             
             # Encirclement state
             elif self.state == 2:
-                next_pos = self.current_pose + 0.2*(self.target_pos - self.current_pose)
-                next_pos[2] = self.hover_height
-                self.send_position(next_pos)
+                if self.trajectory == 'follow_limo':
+                    next_pos = self.current_pose + 0.2*(self.target_pos - self.current_pose)
+                    next_pos[2] = self.hover_height
+                    self.send_position(next_pos)
+                elif self.trajectory == 'eight':
+                    if self.index > (len(self.t)-1):
+                        self.index = 0
+                    self.send_position(np.array([self.x[self.index], self.y[self.index], self.hover_height]))
+                    self.index +=1
             
             # Landing state
             elif self.state == 3:
