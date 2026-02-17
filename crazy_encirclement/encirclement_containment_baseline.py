@@ -8,7 +8,7 @@ from std_msgs.msg import Bool
 from std_srvs.srv import Empty
 from crazyflie_interfaces.srv import Arm
 from std_msgs.msg import Float32
-from crazy_encirclement.filters import BaselineFilter, wrap_to_2pi, wrap_to_pi
+from crazy_encirclement.filters import BaselineFilter, Baseline3DFilter, wrap_to_2pi, wrap_to_pi
 from crazy_encirclement.bearing_formation_control import bearing_based_formation_control
 from crazy_encirclement_interfaces.msg import Metadata
 from rclpy.qos import QoSPresetProfiles
@@ -237,7 +237,7 @@ class Encirclement_Containment(Node):
                     self.info("Lost phase information, returning to hover.")
             
             elif self.state == 3:
-                v = bearing_based_formation_control(self.swarm_poses, self.evader_pos, 0.2 ,2*self.radius_nominal)                
+                v = bearing_based_formation_control(self.swarm_poses, self.evader_pos, 0.2 ,1.5*self.radius_nominal)                
                 v = self.R_dw.apply(v) #transforming velocity in drone frame to world frame
                 vel_world = VelocityWorld()
                 vel_world.vel.x = v[0]
@@ -247,10 +247,10 @@ class Encirclement_Containment(Node):
                 # next_pos = self.current_pose + v *self.timer_period
                 # next_pos[2] = self.hover_height
                 # self.send_position(next_pos)
-                if np.linalg.norm(self.evader_pos)< 1.5*self.radius_nominal:
+                if np.linalg.norm(self.evader_pos)< 1.7*self.radius_nominal:
                     # self.info(f'Velocity commands {self.evader_pos[0:2]}')
                     # self.encircle_pub.publish(Bool(data=True))
-                    self.state = 2
+                    self.state = 4
                     self.hover_height = 0.0
                     vel_world = VelocityWorld()
                     self.velocity_pub.publish(vel_world)
@@ -258,8 +258,30 @@ class Encirclement_Containment(Node):
                     phase = 2*np.pi*self.all_order.index(self.robot)/self.n_agents
                     current_pos = np.array([self.radius_nominal*np.cos(phase), self.radius_nominal*np.sin(phase),self.hover_height])
                     self.send_position(current_pos)
-            # Landing state
+                    self.baseline3D = Baseline3DFilter(self.all_order.index(self.robot), self.robot,self.embedding_fn_name, self.params, self)
+                    self.state = 4
             elif self.state == 4:
+                if self.has_phase_follower and self.has_phase_leader:                  
+                    # Propagating the system
+                    # self.baseline.radius_nominal = np.min(1,np.linalg.norm())
+                    current_pose = self.current_pose.copy()
+                    current_pose[2] -= self.hover_height  # Remove height offset
+                    phase, position = self.baseline3D.predict(current_pose, self.phases)
+                    # Updating internal parameters
+                    self.phases[1] = phase.data
+                    self.publish_phase_differences()
+
+                    # Sending position command
+                    target_r = np.array([position.pose.position.x,
+                                         position.pose.position.y,
+                                         position.pose.position.z + self.hover_height])
+                    self.send_position(target_r)
+
+                else:
+                    self.state = 1  # Return to hover if phases are not available
+                    self.info("Lost phase information, returning to hover.")                
+            # Landing state
+            elif self.state == 5:
                 self.landing()
                 if self.i_landing < len(self.t_landing)-1:
                     self.i_landing += 1
@@ -331,9 +353,9 @@ class Encirclement_Containment(Node):
                     self.final_pose[0] = robot_pose.pose.position.x
                     self.final_pose[1] = robot_pose.pose.position.y
                     self.final_pose[2] = robot_pose.pose.position.z
-                    self.landing_traj(3)
+                    self.landing_traj(4)
                     self.has_final = True
-                    self.state = 4
+                    self.state = 5
 
     def _phase_callback_leader(self, msg: Float32):
         ''' Callback to receive the filtered phase of the leader agent. '''
@@ -403,7 +425,7 @@ class Encirclement_Containment(Node):
 
     def landing_traj(self, t_max: float):
         ''' Landing trajectory generation. '''
-        self.t_landing = np.arange(t_max, 0, -self.timer_period)
+        self.t_landing = np.arange(t_max, -0.6, -self.timer_period)
         self.i_landing = 0
         self.r_landing = np.zeros((3, len(self.t_landing)))
         self.r_landing[0,:] += self.final_pose[0] * np.ones(len(self.t_landing))

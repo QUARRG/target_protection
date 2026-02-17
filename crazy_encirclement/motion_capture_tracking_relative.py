@@ -15,7 +15,7 @@ class MocapRelative(Node):
         # Initial parameters
         self.declare_parameter('update_hz', 200.0)
         self.declare_parameter('reference_object', 'LIMO')
-        self.declare_parameter('evader', 'C26') #the evader position will not be relatve
+        self.declare_parameter('evader', 'C24') #the evader position will not be relatve
         self.declare_parameter('pursuers', ['C23','C24'])
         self.update_hz = self.get_parameter('update_hz').get_parameter_value().double_value
         self.reference = self.get_parameter('reference_object').get_parameter_value().string_value
@@ -77,10 +77,11 @@ class MocapRelative(Node):
             #         qw = pose.pose.orientation.w
             #         self.R_wc = R.from_quat([qx, qy, qz, qw])  # Car to world
             #         self.R_cw = self.R_wc.inv()                # World to Car
-        if (not all(item in self.R_wd0 for item in self.pursuers)) or (self.evader not in self.R_wd0):
+        if (not all(item in self.R_wd0 for item in self.pursuers)):
             for pose in msg.poses:
-                R_aux = R.from_quat([pose.pose.orientation.x,pose.pose.orientation.y,pose.pose.orientation.z,pose.pose.orientation.w])
-                self.R_wd0[pose.name] = R_aux.inv() #save the inverse of the initial rotation
+                if pose.name != 'LIMO' and pose.name != self.evader:
+                    R_aux = R.from_quat([pose.pose.orientation.x,pose.pose.orientation.y,pose.pose.orientation.z,pose.pose.orientation.w])
+                    self.R_wd0[pose.name] = R_aux.inv() #save the inverse of the initial rotation
         else:
             self.has_mocap = True
             self.ref_pose.header = msg.header
@@ -101,10 +102,12 @@ class MocapRelative(Node):
                     self.R_cw = self.R_wc.inv()
                 if pose.name == self.evader:
                     self.relative_poses.poses.append(pose)
+                if pose.name == 'LIMO':
+                    self.relative_poses.poses.append(pose)
 
             # Getting relative poses of other robots with respect to ego
             for pose in msg.poses:
-                if pose.name != self.reference and pose.name != self.evader:
+                if pose.name != 'LIMO' and pose.name != self.evader:
                     relative_pose_d = NamedPose()
                     relative_pose_d.name = pose.name
                     rel_pose_w = np.array([pose.pose.position.x - self.ref_pose.pose.position.x,pose.pose.position.y - self.ref_pose.pose.position.y,pose.pose.position.z - self.ref_pose.pose.position.z])

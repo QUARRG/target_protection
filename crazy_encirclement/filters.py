@@ -1071,17 +1071,13 @@ class Baseline3DFilter(BaseFilter):
         self.pub_radius = self.node.create_publisher(Float32, f'/{self.name}/baseline/radius', 10)
         self.node.info(f'Baseline filter for agent {self.name} initialized.')
     
-    def predict(self, current_pose: np.ndarray, current_vel: np.ndarray, phases: list[float], phases_normals: list[float]):
+    def predict(self, current_pose: np.ndarray, phases: list[float]):
         prev_leader_phase, prev_ego_phase, prev_follower_phase = phases
-        prev_leader_phase_normal, prev_ego_phase_normal, prev_follower_phase_normal = phases_normals
-        Re = build_Re(self.embedding_fn, prev_ego_phase)
         # Rc = build_Rc(prev_ego_phase)
         # p = Rc.T @ Re.T @ current_pose
         # self.radius  = np.sqrt(p[0]**2 + p[1]**2 + p[2]**2)
-        if np.linalg.norm(current_vel) > 0.05 and np.linalg.norm(current_pose) != 0:
-            self.normal = np.cross(current_vel, current_pose)/np.linalg.norm(np.cross(current_vel, current_pose))
-        else:
-            self.normal = np.array([0,0,1])      
+        # self.radius  = np.sqrt(p[0]**2 + p[1]**2 + p[2]**2)
+     
         pose = self.Re.T @ current_pose
         current_ego_phase = wrap_to_2pi(np.arctan2(pose[1], pose[0]))
         current_ego_phase_normal = wrap_to_2pi(np.arctan2(self.normal[2],self.normal[0]))
@@ -1089,12 +1085,11 @@ class Baseline3DFilter(BaseFilter):
         # curr_ego_phase = np.arctan2(p[1], p[0])
 
         omega_z, gain_z = phase_controller(current_ego_phase, prev_leader_phase, prev_follower_phase, self.omega_nominal, self.k_phi)
-        omega_y, gain_z = phase_controller(current_ego_phase_normal, prev_leader_phase_normal, prev_follower_phase_normal, self.omega_nominal/10, self.k_phi)
-        omega_y = 0
+
         # Update phase
         des_ego_pose_2D = np.array([self.radius_nominal*np.cos(current_ego_phase),self.radius_nominal*np.sin(current_ego_phase), 0])
         desired_ego_pose = exp_SO3(np.asarray([0., 0., omega_z *0.6])) @ des_ego_pose_2D
-        Re = build_Re(self.embedding_fn, current_ego_phase)
+        # Re = build_Re(self.embedding_fn, current_ego_phase)
         # desired_ego_phase = wrap_to_2pi(np.arctan2(desired_ego_pose[1], desired_ego_pose[0]))
         # self.Re = exp_SO3(np.asarray([0., omega_y*0.6, 0.])) @ self.Re
         desired_ego_pose_3D = self.Re@desired_ego_pose
@@ -1127,4 +1122,4 @@ class Baseline3DFilter(BaseFilter):
         gain_msg.data = gain_z
         self.pub_gain.publish(gain_msg)
 
-        return phase_msg_test, msg_normal, desired_pose_msg
+        return phase_msg_test, desired_pose_msg

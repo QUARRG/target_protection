@@ -26,10 +26,14 @@ class Evader(Node):
         self.declare_parameter('robot', 'C24')
         self.declare_parameter('hover_height', 0.8)
         self.declare_parameter('frame_id', 'world')
+        self.declare_parameter('target', 'LIMO')
+        self.declare_parameter('trajectory','straight')
 
         self.robot    = str(self.get_parameter('robot').value)
         self.hover_height = float(self.get_parameter('hover_height').value)
         self.frame_id = str(self.get_parameter('frame_id').value)
+        self.target = str(self.get_parameter('target').value)
+        self.trajectory = str(self.get_parameter('trajectory').value)
 
         # Reboot client
         self.reboot_client = self.create_client(Empty, self.robot + '/reboot')
@@ -46,6 +50,7 @@ class Evader(Node):
         self.final_pose   = np.zeros(3)
         self.current_pose = np.zeros(3)
         self.initial_pose = np.zeros(3)
+        self.target_pos = np.zeros(3)
         
         self.i_landing = 0
         self.i_takeoff = 0
@@ -118,7 +123,9 @@ class Evader(Node):
             
             # Encirclement state
             elif self.state == 2:
-                pass
+                next_pos = self.current_pose + 0.2*(self.target_pos - self.current_pose)
+                next_pos[2] = self.hover_height
+                self.send_position(next_pos)
             
             # Landing state
             elif self.state == 3:
@@ -166,6 +173,10 @@ class Evader(Node):
                     self.landing_traj(3)
                     self.has_final = True
                     self.state = 3
+            if robot_pose.name == self.target:
+                self.target_pos[0] = robot_pose.pose.position.x
+                self.target_pos[1] = robot_pose.pose.position.y
+                self.target_pos[2] = robot_pose.pose.position.z
 
     def takeoff(self):
         ''' Take-off procedure to reach the hover height. '''
