@@ -102,8 +102,8 @@ def parse_yaml(context):
 
     # Listing all enabled robots
     # robots_list = [robot for robot in crazyflies['robots'] if crazyflies['robots'][robot]['enabled']]
-    setpoint = [[0., 0., 0.3], [0., 0.3, 0.3], [0., -0.3, 0.3]]
-    robots = ['C23', 'C24', 'C25']
+    setpoint = [[0., 0., 0.7], [0., 0.4, 0.5], [0., -0.4, 0.3]]
+    robots = ['C26', 'C24', 'C25']
     # selected_drone = 'C24'
     # robots_list = [selected_drone] if selected_drone in robots_list else robots_list
 

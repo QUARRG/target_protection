@@ -30,6 +30,7 @@ class Encirclement_Containment(Node):
         # Parameters
         self.declare_parameter('robot', 'C20')
         self.declare_parameter('evader', 'C25')
+        self.declare_parameter('target','LIMO')
         self.declare_parameter('number_of_agents', 4)
         self.declare_parameter('initial_phase', '0.0')
         self.declare_parameter('radius_nominal', 1.0)
@@ -38,6 +39,8 @@ class Encirclement_Containment(Node):
         self.declare_parameter('embedding_fn_name', 'modelB')
         self.declare_parameter('hover_height', 0.3)
         self.declare_parameter('frame_id', 'world')
+        self.declare_parameter('capture', False)
+        self.declare_parameter('capture_dist', 1.0)
 
         self.robot    = str(self.get_parameter('robot').value)
         self.evader    = str(self.get_parameter('evader').value)
@@ -48,6 +51,9 @@ class Encirclement_Containment(Node):
         self.embedding_fn_name = str(self.get_parameter('embedding_fn_name').value)
         self.hover_height = float(self.get_parameter('hover_height').value)
         self.frame_id = str(self.get_parameter('frame_id').value)
+        self.capture = self.get_parameter('capture').value
+        self.capture_dist = self.get_parameter('capture_dist').value
+        self.target = str(self.get_parameter('target').value)
 
         # Desired phase difference
         self.desired_phase_diff = 2.0 * np.pi / self.n_agents
@@ -83,6 +89,7 @@ class Encirclement_Containment(Node):
         self.final_pose   = np.zeros(3)
         self.current_pose = np.zeros(3)
         self.previous_pose = np.zeros(3)
+        self.target_pose = np.zeros(3)
         self.previous_pose_time = 0.0
         self.initial_pose = np.zeros(3)
         self.distances = None
@@ -263,7 +270,11 @@ class Encirclement_Containment(Node):
             elif self.state == 4:
                 if self.has_phase_follower and self.has_phase_leader:                  
                     # Propagating the system
-                    # self.baseline.radius_nominal = np.min(1,np.linalg.norm())
+                    if self.capture:
+                        if np.linalg.norm(self.current_pose-self.evader_pos) < self.capture_dist:
+                            self.land_flag = True
+                        if np.linalg.norm(self.target_pose-self.evader_pos)< 0.3:
+                            self.baseline.radius_nominal = 0.0
                     current_pose = self.current_pose.copy()
                     current_pose[2] -= self.hover_height  # Remove height offset
                     phase, position = self.baseline3D.predict(current_pose, self.phases)
@@ -306,6 +317,10 @@ class Encirclement_Containment(Node):
                     self.evader_pos[0] = pose.pose.position.x
                     self.evader_pos[1] = pose.pose.position.y 
                     self.evader_pos[2] = pose.pose.position.z  
+                elif pose.name == self.target:
+                    self.target_pose[0] = pose.pose.position.x
+                    self.target_pose[1] = pose.pose.position.y
+                    self.target_pose[2] = pose.pose.position.z
             
 
     def _poses_changed(self, msg: NamedPoseArray):

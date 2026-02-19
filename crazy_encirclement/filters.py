@@ -463,7 +463,7 @@ class FilterUnicycle:
         
         # V: Measurement Noise (3x3) - Now represents full 3D sensor noise
         self.V: np.ndarray = np.diag(np.square(self.params.get('V', np.ones(self.dim_meas) * 0.1)))
-
+        # self.node.info(f'{params}')
         # Initial state
         self.p: np.ndarray = np.array(self.params.get('position_guess', [0.0, 0.0]), dtype=float) # [x, y]
         self.z_ground: float = float(self.params.get('z_ground_guess', 0.0))                      # z_g
@@ -483,42 +483,44 @@ class FilterUnicycle:
     def predict(self, dt: float) -> dict:
         ''' Propagates the state and covariance forward in time. '''
 
-        # --- ZUPT LOGIC START ---
-        is_stopped = abs(self.linear_speed) < self.zupt_threshold
+        # # --- ZUPT LOGIC START ---
+        # is_stopped = abs(self.linear_speed) < self.zupt_threshold
 
-        if is_stopped:
-            # --- 1. STATE CLAMPING ---
-            # STOP the linear drift. 
-            # If we don't do this, position = position + v * dt will drift forever.
-            self.linear_speed = 0.0 
+        # if is_stopped:
+        #     # --- 1. STATE CLAMPING ---
+        #     # STOP the linear drift. 
+        #     # If we don't do this, position = position + v * dt will drift forever.
+        #     self.linear_speed = 0.0 
             
-            # DO NOT clamp angular_speed. 
-            # The robot might be turning, we just can't see it.
-            # self.angular_speed = ... (Leave as is)
+        #     # DO NOT clamp angular_speed. 
+        #     # The robot might be turning, we just can't see it.
+        #     # self.angular_speed = ... (Leave as is)
 
-            # --- 2. COVARIANCE MANIPULATION ---
-            current_Q = np.zeros_like(self.Q)
+        #     # --- 2. COVARIANCE MANIPULATION ---
+        #     current_Q = np.zeros_like(self.Q)
             
-            # A. FREEZE Position & Ground (We know it's not translating)
-            # 1e-6 allows tiny adjustments for VIO drift, but stops jumpiness.
-            current_Q[0,0] = 1e-6 
-            current_Q[1,1] = 1e-6 
-            current_Q[5,5] = 1e-6 
+        #     # A. FREEZE Position & Ground (We know it's not translating)
+        #     # 1e-6 allows tiny adjustments for VIO drift, but stops jumpiness.
+        #     current_Q[0,0] = 1e-2
+        #     current_Q[1,1] = 1e-2 
+        #     current_Q[5,5] = 1e-2 
 
-            # B. WAKE UP Velocity
-            # We forced v=0 above, but we keep noise non-zero so the filter 
-            # stays "awake" to detect when the car accelerates again.
-            current_Q[4,4] = 1e-4 
+        #     # B. WAKE UP Velocity
+        #     # We forced v=0 above, but we keep noise non-zero so the filter 
+        #     # stays "awake" to detect when the car accelerates again.
+        #     current_Q[4,4] = 1e-2 
 
-            # C. INFLATE Heading & Omega
-            # We admit we don't know the heading because we can't observe rotation.
-            # This makes P_theta grow large, so when we move again, it snaps quickly.
-            current_Q[2,2] = 1.0 
-            current_Q[3,3] = 1.0 
+        #     # C. INFLATE Heading & Omega
+        #     # We admit we don't know the heading because we can't observe rotation.
+        #     # This makes P_theta grow large, so when we move again, it snaps quickly.
+        #     current_Q[2,2] = 1.0 
+        #     current_Q[3,3] = 1.0 
             
-        else:
-            current_Q = self.Q
-        # --- ZUPT LOGIC END ---
+        # else:
+        #     current_Q = self.Q
+        # # --- ZUPT LOGIC END ---
+
+        current_Q = self.Q
         
         # 1. State Propagation
         # Rotation: R_next = R * Exp(omega * dt)
@@ -556,6 +558,7 @@ class FilterUnicycle:
         # 3. Covariance Propagation
         F = self.I + A * dt
         self.P = F @ self.P @ F.T + current_Q * dt
+        self.P = 0.5 * (self.P + self.P.T) 
 
         # ---- Publish predicted state ----
         state_msg = FilterUnicycleState()

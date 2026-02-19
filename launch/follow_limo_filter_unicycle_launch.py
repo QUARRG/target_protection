@@ -117,12 +117,14 @@ def parse_yaml(context):
         ))
 
         # GPS/Scanner II Node for each robot
+        # Match the scanner publish rate to the filter's update rate to avoid measurement bottleneck
+        scanner_update_hz = filter_yaml_content.get('FilterUnicycle', {}).get('update_hz', 10.0)
         Nodes.append(Node(
             package='crazy_encirclement',
             executable='gps_scanner_ii',
             name=robot+'_gps_scanner_ii_node',
             output='screen',
-            parameters=[{'robot': robot}],
+            parameters=[{'robot': robot, 'update_hz': scanner_update_hz}],
         ))
 
         # Watch dog node for each robot

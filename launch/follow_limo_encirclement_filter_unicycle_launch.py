@@ -109,7 +109,7 @@ def parse_yaml(context):
             executable='follow_limo_encirclement_filter_unicycle',
             name=robot+'_follow_limo_encirclement_filter_unicycle',
             output='screen',
-            parameters=[{'robot': robot} | filter_yaml_content.get('FilterRelativeII', {})]
+            parameters=[{'robot': robot, 'number_of_agents': len(robots_list)} | filter_yaml_content.get('FilterRelativeII', {})]
         ))
 
         # GPS/Scanner II Node for each robot
@@ -129,6 +129,15 @@ def parse_yaml(context):
             output='screen',
             parameters=[{'robot_prefix': robot}]
         ))
+
+    # Agents order node
+    Nodes.append(Node(
+        package='crazy_encirclement',
+        executable='agents_order',
+        name='agents_order',
+        output='screen',
+        parameters= [{'robot_data': robots_list}]
+    ))
 
     return Nodes
 

@@ -24,7 +24,7 @@ class MocapRelative(Node):
         # Transformation matrices
         self.R_wc = R.from_quat([0, 0, 0, 1])
         self.R_cw = R.from_quat([0, 0, 0, 1])
-
+        self.info = self.get_logger().info
         self.has_mocap = False
         self.R0 = {}
             
@@ -64,7 +64,7 @@ class MocapRelative(Node):
         self.timer = self.create_timer(1/100, self._timer_callback)
     def _callback(self, msg: NamedPoseArray):
         '''Callback function to process incoming NamedPoseArray messages from Vicon and publish noisy GPS positions.'''
-         
+        # self.info('here')
             # # Getting reference pose
             # for pose in msg.poses:
             #     if pose.name == self.reference:

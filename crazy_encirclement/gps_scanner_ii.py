@@ -13,7 +13,7 @@ class GPSScannerNodeII(Node):
     def __init__(self):
         super().__init__('gps_scanner_ii_node')
         self.declare_parameter('robot', 'C01')
-        self.declare_parameter('update_hz', 10.0)
+        self.declare_parameter('update_hz', 100.0)
 
         self.robot = self.get_parameter('robot').get_parameter_value().string_value
         self.update_hz = self.get_parameter('update_hz').get_parameter_value().double_value
@@ -32,8 +32,14 @@ class GPSScannerNodeII(Node):
         self.timer = self.create_timer(1.0 / self.update_hz, self._timer_callback)
 
         self.ego_pose = PoseStamped()
-        self.scanner  = NamedPoseArray()
-        self.gps_scanner_poses_pub = self.create_publisher(NamedPoseArray, f'/{self.robot}/gps_scanner_ii_poses', 10)
+        self.relative_scanner = NamedPoseArray()
+        self.global_scanner = NamedPoseArray()
+        qos_profile = QoSProfile(reliability =QoSReliabilityPolicy.BEST_EFFORT,
+        history=QoSHistoryPolicy.KEEP_LAST,
+        depth=1,
+        deadline = Duration(seconds=0, nanoseconds=1e9/100.0))
+        self.gps_scanner_relative_poses_pub = self.create_publisher(NamedPoseArray, f'/{self.robot}/gps_scanner_relative_poses', qos_profile)
+        self.gps_scanner_global_poses_pub = self.create_publisher(NamedPoseArray, f'/{self.robot}/gps_scanner_global_poses', qos_profile)
         
         # Create latching publisher for initial pose (transient local QoS for late joiners)
         initial_pose_qos = QoSProfile(
@@ -54,8 +60,10 @@ class GPSScannerNodeII(Node):
     def _callback(self, msg: NamedPoseArray):
         '''Callback function to process incoming NamedPoseArray messages from Vicon and publish noisy GPS positions.'''
         self.ego_pose.header = msg.header
-        self.scanner.header  = msg.header
-        self.scanner.poses   = []
+        self.relative_scanner.header = msg.header
+        self.relative_scanner.poses  = []
+        self.global_scanner.header = msg.header
+        self.global_scanner.poses  = []
         # Log received message
         # self.get_logger().debug(f'Received NamedPoseArray with {len(msg.poses)} poses at time {msg.header.stamp.sec}.{msg.header.stamp.nanosec}')
         
@@ -113,13 +121,17 @@ class GPSScannerNodeII(Node):
                 ego_pose = NamedPose()
                 ego_pose.name = pose.name
                 ego_pose.pose = self.ego_pose.pose
-                self.scanner.poses.append(ego_pose)
+                self.relative_scanner.poses.append(ego_pose)
+                self.global_scanner.poses.append(ego_pose)
 
         # Getting relative poses of other robots with respect to ego
         for pose in msg.poses:
             if pose.name != self.robot:
                 relative_pose = NamedPose()
                 relative_pose.name = pose.name
+                global_pose = NamedPose()
+                global_pose.name = pose.name
+
                 T_robot = np.eye(4)
                 T_robot[0:3, 0:3] = R.from_quat([pose.pose.orientation.x, pose.pose.orientation.y,
                                                  pose.pose.orientation.z, pose.pose.orientation.w]).as_matrix()
@@ -141,11 +153,23 @@ class GPSScannerNodeII(Node):
                 relative_pose.pose.position.x = T_rel[0, 3]
                 relative_pose.pose.position.y = T_rel[1, 3]
                 relative_pose.pose.position.z = T_rel[2, 3]
-                self.scanner.poses.append(relative_pose)
+                self.relative_scanner.poses.append(relative_pose)
+
+                # Extract global pose
+                q_rel = R.from_matrix(T_robot_rel[0:3, 0:3]).as_quat()
+                global_pose.pose.orientation.x = q_rel[0]
+                global_pose.pose.orientation.y = q_rel[1]
+                global_pose.pose.orientation.z = q_rel[2]
+                global_pose.pose.orientation.w = q_rel[3]
+                global_pose.pose.position.x = T_robot_rel[0, 3]
+                global_pose.pose.position.y = T_robot_rel[1, 3]
+                global_pose.pose.position.z = T_robot_rel[2, 3]
+                self.global_scanner.poses.append(global_pose)
 
     def _timer_callback(self):
         '''Timer callback to publish the noisy GPS position at the specified rate.'''
-        self.gps_scanner_poses_pub.publish(self.scanner)
+        self.gps_scanner_relative_poses_pub.publish(self.relative_scanner)
+        self.gps_scanner_global_poses_pub.publish(self.global_scanner)
 
 
 def main():

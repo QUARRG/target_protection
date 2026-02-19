@@ -102,7 +102,7 @@ def parse_yaml(context):
 
     # Listing all enabled robots
     robots_list = [robot for robot in crazyflies['robots'] if crazyflies['robots'][robot]['enabled']]
-
+    pursuers_list = robots_list
     for robot in robots_list:
         # Nodes for each robot
         Nodes.append(Node(
@@ -128,7 +128,7 @@ def parse_yaml(context):
             executable='motion_capture_tracking_relative',
             name='mocap_relative',
             output='screen',
-            parameters=[{'robots': robots_list} | filter_yaml_content.get('FilterRelative', {})],
+            parameters=[{'robots': robots_list, 'pursuers': pursuers_list} | filter_yaml_content.get('FilterRelative', {})],
         ))
 
     return Nodes

@@ -6,6 +6,7 @@ from geometry_msgs.msg import PoseStamped
 from crazyflie_interfaces.msg import StringArray, Position
 from std_msgs.msg import Bool
 from std_srvs.srv import Empty
+from crazyflie_interfaces.srv import Arm
 from std_msgs.msg import Float32
 from crazy_encirclement.filters import BaselineFilter, wrap_to_2pi, wrap_to_pi
 from crazy_encirclement_interfaces.msg import Metadata
@@ -52,7 +53,7 @@ class Follow_Limo(Node):
         self.previous_pose = np.zeros(3)
         self.previous_pose_time = 0.0
         self.initial_pose = np.zeros(3)
-        self.set_point = np.array([-0.8,0,self.hover_height])
+        self.set_point = np.array([0,0,self.hover_height])
 
         self.i_landing = 0
         self.i_takeoff = 0
@@ -101,14 +102,13 @@ class Follow_Limo(Node):
 
         # Crazyflie position command publisher
         self.position_pub = self.create_publisher(Position, f'/{self.robot}/cmd_position', 10)
-        if swarm:
-            self.timeHelper = self.swarm.timeHelper
-            self.allcfs = self.swarm.allcfs
-
-            # arm (one by one)
-            for cf in self.allcfs.crazyflies:
-                cf.arm(True)
-                self.timeHelper.sleep(1.0)
+        # Arming all drones
+        self.arm_client = self.create_client(Arm, self.robot + '/arm')
+        # Wait until the service is available
+        while not self.arm_client.wait_for_service(timeout_sec=1.0):
+            self.get_logger().info('Service not available, waiting again...')
+        self.arm()
+        time.sleep(2)
 
         # self.timeHelper.sleep(2.0)
         # input("Press Enter to takeoff")
@@ -177,7 +177,7 @@ class Follow_Limo(Node):
 
 
                 # Set final pose when landing is commanded
-                elif (self.has_final == False) and (self.land_flag == True):
+                elif (self.land_flag == True):
                     self.final_pose = np.zeros(3)
                     self.final_pose[0] = robot_pose.pose.position.x
                     self.final_pose[1] = robot_pose.pose.position.y
@@ -208,13 +208,33 @@ class Follow_Limo(Node):
 
     def landing_traj(self, t_max: float):
         ''' Landing trajectory generation. '''
-        self.t_landing = np.arange(t_max, 0.1, -self.timer_period)
+        self.t_landing = np.arange(t_max, -0.5, -self.timer_period)
         self.i_landing = 0
-        self.r_landing = np.zeros((3, len(self.t_landing)))
-        self.r_landing[0,:] = self.final_pose[0] * np.ones(len(self.t_landing))
-        self.r_landing[1,:] = self.final_pose[1] * np.ones(len(self.t_landing))
-        self.r_landing[2,:] = self.final_pose[2] * (self.t_landing / t_max)
+        double = int(2*len(self.t_landing))
+        self.r_landing = np.zeros((3,double))
+        half = len(self.t_landing)
+        self.r_landing[0,0:half] = self.initial_pose[0] * np.ones(half)
+        self.r_landing[1,0:half] = self.initial_pose[1] * np.ones(half)
+        self.r_landing[2,0:half] = self.hover_height * np.ones(half)
+        self.r_landing[0,half:] = self.final_pose[0] * np.ones(half)
+        self.r_landing[1,half:] = self.final_pose[1] * np.ones(half)
+        self.r_landing[2,half:] = self.final_pose[2] * (self.t_landing / t_max)
 
+    def arm(self):
+        ''' Reboot the system. '''
+        req = Arm.Request()
+        req.arm = True
+        self.arm_client.call_async(req)
+        # Call the service and get the response asynchronously
+        future = self.arm_client.call_async(req)
+        # Wait for the result and handle the response
+        rclpy.spin_until_future_complete(self, future)
+
+        # Now handle the response
+        if future.result() is not None:
+            self.get_logger().info(f'Service call successful, response: {future.result()}')
+        else:
+            self.get_logger().error('Service call failed')  
 
     def _landing_callback(self, msg):
         ''' Callback to initiate landing procedure. '''
@@ -254,10 +274,8 @@ class Follow_Limo(Node):
 
 
 def main():
-    swarm = Crazyswarm()
-    if not rclpy.ok():
-        rclpy.init()
-    follower = Follow_Limo(swarm)
+    rclpy.init()
+    follower = Follow_Limo()
     rclpy.spin(follower)
     follower.destroy_node()
     rclpy.shutdown()
