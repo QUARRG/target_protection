@@ -33,6 +33,11 @@ class FollowUnicycleEncirclement(Node):
         self.declare_parameter('omega_nominal', 0.5)
         self.declare_parameter('k_phi', 1.0)
         self.declare_parameter('frame_id', 'world')
+        
+        # Staged approach parameters
+        self.declare_parameter('approach_tolerance', 0.15)
+        self.declare_parameter('min_neighbor_distance', 0.4)
+        self.declare_parameter('staging_gain', 0.5)
 
         self.robot          = str(self.get_parameter('robot').value)
         self.hover_height   = float(self.get_parameter('hover_height').value)
@@ -41,6 +46,11 @@ class FollowUnicycleEncirclement(Node):
         self.n_agents       = int(self.get_parameter('number_of_agents').value)
         self.k_phi          = float(self.get_parameter('k_phi').value)
         self.frame_id       = str(self.get_parameter('frame_id').value)
+        
+        # Get staged approach parameters
+        self.approach_tolerance     = float(self.get_parameter('approach_tolerance').value)
+        self.min_neighbor_distance  = float(self.get_parameter('min_neighbor_distance').value)
+        self.staging_gain           = float(self.get_parameter('staging_gain').value)
 
         # Filters parameters
         self.declare_parameter('P', [1.0, 1.0, 0.15, 0.5, 0.2])
@@ -95,6 +105,9 @@ class FollowUnicycleEncirclement(Node):
         self.i_takeoff = 0
         self.state = 0
         # 0-take-off, 1-hover, 2-encirclement, 3-landing
+        
+        self.encirclement_stage = 0
+        # 0-approach (position without phase control), 1-full encirclement (with phase control)
 
         # ----------------------------------------------------------------------
         # Subscribers
@@ -264,45 +277,94 @@ class FollowUnicycleEncirclement(Node):
                 limo_state = self.filter_unicycle.predict(self.timer_period)
                 center_pos = np.array(limo_state['position']) 
                 center_z   = limo_state['z_ground']
-
-                # 2. Get Phase Errors (Filter 2)
-                # These are the angular gaps to your neighbors
-                d_phis = self.filter_relative.get_state()
-                d_phi_pred, d_phi_succ = d_phis['pred'], d_phis['succ']
                 
-                # --- B. CONTROL ---
-                # 3. Compute Correction Gain
-                # Goal: Make gaps equal (sum of signed errors = 0)
-                phase_error = (d_phi_pred + d_phi_succ)
-                u_correction = self.k_phi * phase_error
-
-                # 4. INTEGRATE Virtual Phase (The "Motion" Step)
-                # Initialize alpha if first run
-                if self.alpha is None:
-                    # Start at current angle relative to car
-                    curr_pos = self.T_curr[0:2, 3] 
-                    self.alpha = np.arctan2(curr_pos[1] - center_pos[1], 
-                                            curr_pos[0] - center_pos[0])
-
-                # Update the angle: Nominal Orbit + Feedback Correction
-                # This replaces the "Rc @ exp(omega)" logic from the old filter
-                rotation_speed = self.omega_nominal + u_correction
-                self.alpha += rotation_speed * self.timer_period
+                # STAGE 2a: APPROACH PHASE (No phase control)
+                if self.encirclement_stage == 0:
+                    # Initialize alpha if first run
+                    if self.alpha is None:
+                        # Start at current angle relative to limo
+                        curr_pos = self.T_curr[0:2, 3] 
+                        self.alpha = np.arctan2(curr_pos[1] - center_pos[1], 
+                                                curr_pos[0] - center_pos[0])
+                    
+                    # Simple approach control: move toward desired radius
+                    # Current distance to limo center
+                    curr_pos = self.T_curr[0:2, 3]
+                    to_limo = curr_pos - center_pos
+                    dist_to_limo = np.linalg.norm(to_limo)
+                    
+                    # Desired position at nominal radius
+                    # Slowly rotate while approaching to avoid sudden movements
+                    self.alpha += self.omega_nominal * self.timer_period * 0.3  # Slower rotation during approach
+                    self.alpha = wrap_to_pi(self.alpha)
+                    
+                    # Target point at desired radius
+                    target_pos = center_pos + self.radius_nominal * np.array([np.cos(self.alpha), np.sin(self.alpha)])
+                    
+                    # Proportional control toward target
+                    error = target_pos - curr_pos
+                    correction = self.staging_gain * error
+                    
+                    # Apply correction with limits
+                    correction_norm = np.linalg.norm(correction)
+                    max_correction = 0.3  # Max 30cm correction per step
+                    if correction_norm > max_correction:
+                        correction = correction / correction_norm * max_correction
+                    
+                    x_des = curr_pos[0] + correction[0]
+                    y_des = curr_pos[1] + correction[1]
+                    z_des = center_z + self.hover_height
+                    p_des = np.array([x_des, y_des, z_des])
+                    
+                    # Check transition conditions
+                    if self._check_approach_complete(center_pos, dist_to_limo):
+                        self.info(f"{self.robot}: Approach complete, transitioning to full encirclement")
+                        self.encirclement_stage = 1
+                    
+                    # Desired position in the Vicon frame
+                    r_des = self._get_desired_position(p_des)   
+                    self.send_position(r_des)
                 
-                # Wrap to [-pi, pi]
-                self.alpha = wrap_to_pi(self.alpha)
+                # STAGE 2b: FULL ENCIRCLEMENT (With phase control)
+                elif self.encirclement_stage == 1:
+                    # 2. Get Phase Errors (Filter 2)
+                    # These are the angular gaps to your neighbors
+                    d_phis = self.filter_relative.get_state()
+                    d_phi_pred, d_phi_succ = d_phis['pred'], d_phis['succ']
+                    
+                    # --- B. CONTROL ---
+                    # 3. Compute Correction Gain
+                    # Goal: Make gaps equal (sum of signed errors = 0)
+                    phase_error = (d_phi_pred + d_phi_succ)
+                    u_correction = self.k_phi * phase_error
 
-                # --- C. TRAJECTORY GENERATION ---
-                # 5. Polar -> Cartesian (Global Frame)
-                # This generates the moving setpoint on the circle
-                x_des = center_pos[0] + self.radius_nominal * np.cos(self.alpha)
-                y_des = center_pos[1] + self.radius_nominal * np.sin(self.alpha)
-                z_des = center_z      + self.hover_height
-                p_des = np.array([x_des, y_des, z_des])
+                    # 4. INTEGRATE Virtual Phase (The "Motion" Step)
+                    # Initialize alpha if first run
+                    if self.alpha is None:
+                        # Start at current angle relative to car
+                        curr_pos = self.T_curr[0:2, 3] 
+                        self.alpha = np.arctan2(curr_pos[1] - center_pos[1], 
+                                                curr_pos[0] - center_pos[0])
 
-                # Desired position in the Vicon frame
-                r_des = self._get_desired_position(p_des)   
-                self.send_position(r_des)
+                    # Update the angle: Nominal Orbit + Feedback Correction
+                    # This replaces the "Rc @ exp(omega)" logic from the old filter
+                    rotation_speed = self.omega_nominal + u_correction
+                    self.alpha += rotation_speed * self.timer_period
+                    
+                    # Wrap to [-pi, pi]
+                    self.alpha = wrap_to_pi(self.alpha)
+
+                    # --- C. TRAJECTORY GENERATION ---
+                    # 5. Polar -> Cartesian (Global Frame)
+                    # This generates the moving setpoint on the circle
+                    x_des = center_pos[0] + self.radius_nominal * np.cos(self.alpha)
+                    y_des = center_pos[1] + self.radius_nominal * np.sin(self.alpha)
+                    z_des = center_z      + self.hover_height
+                    p_des = np.array([x_des, y_des, z_des])
+
+                    # Desired position in the Vicon frame
+                    r_des = self._get_desired_position(p_des)   
+                    self.send_position(r_des)
 
             # Landing state
             elif self.state == 3:
@@ -347,9 +409,11 @@ class FollowUnicycleEncirclement(Node):
             T_curr_robot = np.linalg.inv(self.T_init) @ self.T_curr
             self.filter_unicycle.update(measurement_limo, T_curr_robot[0:3, 0:3], T_curr_robot[0:3, 3])
             
-            # Current pose in the initial frame
-            T_curr_robot = np.linalg.inv(self.T_init) @ self.T_curr
-            self.filter_relative.update(measurement_limo, measurement_pred, measurement_succ, T_curr_robot[0:3, 0:3], T_curr_robot[0:3, 3])
+            # Only update relative filter during full encirclement stage
+            if self.encirclement_stage == 1:
+                # Current pose in the initial frame
+                T_curr_robot = np.linalg.inv(self.T_init) @ self.T_curr
+                self.filter_relative.update(measurement_limo, measurement_pred, measurement_succ, T_curr_robot[0:3, 0:3], T_curr_robot[0:3, 3])
 
     def _poses_changed(self, msg):
         """ Topic update callback to the motion capture lib's
@@ -445,6 +509,7 @@ class FollowUnicycleEncirclement(Node):
 
     def _encircle_callback(self, msg):
         ''' Callback to initiate encirclement procedure. '''
+        self.encirclement_stage = 0  # Start with approach phase
         self.state = 2
 
     def hover(self):
@@ -514,6 +579,34 @@ class FollowUnicycleEncirclement(Node):
         T_des = self.T_init @ T_set_point
         r_des = T_des[0:3, 3] 
         return r_des
+    
+    def _check_approach_complete(self, center_pos: np.ndarray, dist_to_limo: float) -> bool:
+        ''' Check if approach phase is complete and ready for full encirclement. '''
+        # Condition 1: Distance to limo center within tolerance
+        radius_error = abs(dist_to_limo - self.radius_nominal)
+        at_nominal_radius = radius_error < self.approach_tolerance
+        
+        # Condition 2 & 3: Check distances to neighbors
+        safe_from_neighbors = True
+        
+        if self.FOLLOWER_pose is not None and self.LEADER_pose is not None:
+            # Distance to follower in current frame
+            follower_dist = np.linalg.norm([
+                self.FOLLOWER_pose.pose.position.x,
+                self.FOLLOWER_pose.pose.position.y
+            ])
+            
+            # Distance to leader in current frame
+            leader_dist = np.linalg.norm([
+                self.LEADER_pose.pose.position.x,
+                self.LEADER_pose.pose.position.y
+            ])
+            
+            # Both neighbors must be at safe distance
+            safe_from_neighbors = (follower_dist > self.min_neighbor_distance and 
+                                   leader_dist > self.min_neighbor_distance)
+        
+        return at_nominal_radius and safe_from_neighbors
 
 
 def main():

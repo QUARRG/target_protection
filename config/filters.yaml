@@ -68,6 +68,9 @@ FilterRelativeII:
   omega_nominal: 0.2   # radians per second
   hover_height: 0.3    # meters
   zupt_threshold: 0.01 # m/s
+  approach_tolerance: 0.15   # meters
+  min_neighbor_distance: 0.5 # meters
+  staging_gain: 0.5
   k_phi: 1.0
 
 FilterSpatial:
