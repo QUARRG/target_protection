@@ -8,7 +8,7 @@ from std_msgs.msg import Bool
 from std_srvs.srv import Empty
 from crazyflie_interfaces.srv import Arm
 from std_msgs.msg import Float32
-from crazy_encirclement.filters import FilterUnicycle, FilterRelativeII, wrap_to_pi
+from crazy_encirclement.filters import FilterUnicycle, FilterRelativeII, wrap_to_pi, wrap_to_2pi
 from crazy_encirclement_interfaces.msg import Metadata
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy, QoSDurabilityPolicy, QoSPresetProfiles
 from motion_capture_tracking_interfaces.msg import NamedPoseArray
@@ -218,7 +218,7 @@ class FollowUnicycleEncirclement(Node):
         while (self.FOLLOWER_pose is None and self.LEADER_pose is None):
             rclpy.spin_once(self, timeout_sec=0.1)
 
-        initialization_noise_rel = np.zeros(2)  # np.random.multivariate_normal(np.zeros(len(self.P_rel_list)), np.diag(np.square(self.P_rel_list)))
+        initialization_noise_rel = np.random.multivariate_normal(np.zeros(len(self.P_rel_list)), np.diag(np.square(self.P_rel_list)))
 
         rotation_leader = R.from_quat([self.LEADER_pose.pose.orientation.x, self.LEADER_pose.pose.orientation.y,
                                        self.LEADER_pose.pose.orientation.z, self.LEADER_pose.pose.orientation.w])
@@ -289,7 +289,8 @@ class FollowUnicycleEncirclement(Node):
                 # --- B. CONTROL ---
                 # 3. Compute Correction Gain
                 # Goal: Make gaps equal (sum of signed errors = 0)
-                phase_error = (d_phi_pred + d_phi_succ)
+                # phase_error = (d_phi_pred + d_phi_succ)
+                phase_error = 1/(d_phi_pred + 1e-6) + 1/(d_phi_succ + 1e-6)
                 u_correction = self.k_phi * phase_error
 
                 # 4. INTEGRATE Virtual Phase (The "Motion" Step)
@@ -305,13 +306,13 @@ class FollowUnicycleEncirclement(Node):
                 rotation_speed = self.omega_nominal + u_correction
                 self.alpha += rotation_speed * self.timer_period
 
+                # Wrap to [0, 2*pi]
+                self.alpha = wrap_to_2pi(self.alpha)
+
                 # Publishing omega
                 omega_d = Float32()
                 omega_d.data = rotation_speed
                 self.omega_pub.publish(omega_d)
-                
-                # Wrap to [-pi, pi]
-                self.alpha = wrap_to_pi(self.alpha)
 
                 # --- C. TRAJECTORY GENERATION ---
                 # 5. Polar -> Cartesian (Global Frame)
@@ -359,9 +360,17 @@ class FollowUnicycleEncirclement(Node):
             self.FOLLOWER_pose is not None and \
             self.LEADER_pose is not None:
 
+            measurement_limo_noise = np.random.multivariate_normal(np.zeros(3), np.diag(np.square(self.V_list[0:3])))
             measurement_limo = np.array([self.LIMO_pose.pose.position.x, self.LIMO_pose.pose.position.y, self.LIMO_pose.pose.position.z])
+            measurement_limo += measurement_limo_noise
+            
+            measurement_pred_noise = np.random.multivariate_normal(np.zeros(2), np.diag(np.square(self.V_rel_list)))
             measurement_pred = np.array([self.FOLLOWER_pose.pose.position.x, self.FOLLOWER_pose.pose.position.y, self.FOLLOWER_pose.pose.position.z])
+            measurement_pred += measurement_pred_noise
+            
+            measurement_succ_noise = np.random.multivariate_normal(np.zeros(2), np.diag(np.square(self.V_rel_list)))
             measurement_succ = np.array([self.LEADER_pose.pose.position.x, self.LEADER_pose.pose.position.y, self.LEADER_pose.pose.position.z])
+            measurement_succ += measurement_succ_noise
 
             # Updating filters
             if self.state == 1:

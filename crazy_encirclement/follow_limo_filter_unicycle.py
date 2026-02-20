@@ -141,7 +141,7 @@ class FollowUnicycle(Node):
             rclpy.spin_once(self, timeout_sec=0.1)
 
         # Initial noise using P 
-        initialization_noise = np.zeros(6)  #np.random.multivariate_normal(np.zeros(len(self.P_list)), np.diag(np.square(self.P_list)))
+        initialization_noise = np.random.multivariate_normal(np.zeros(len(self.P_list)), np.diag(np.square(self.P_list)))
 
         # Initial states - transform from drone body frame to global frame
         # LIMO_pose is in drone's body frame, need to transform to initial/global frame
@@ -252,8 +252,10 @@ class FollowUnicycle(Node):
 
         # Update filter with new measurement
         if self.LIMO_pose is not None and self.state == 2:
+            measurement_noise = np.random.multivariate_normal(np.zeros(3), np.diag(np.square(self.V_list)))
             measurement = np.array([self.LIMO_pose.pose.position.x, self.LIMO_pose.pose.position.y, self.LIMO_pose.pose.position.z])
-
+            measurement += measurement_noise
+            
             # Current pose in the initial frame
             T_curr_robot = np.linalg.inv(self.T_init) @ self.T_curr
             
