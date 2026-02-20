@@ -33,6 +33,11 @@ class FollowUnicycleEncirclement(Node):
         self.declare_parameter('omega_nominal', 0.5)
         self.declare_parameter('k_phi', 1.0)
         self.declare_parameter('frame_id', 'world')
+        
+        # Staged approach parameters
+        self.declare_parameter('approach_tolerance', 0.15)
+        self.declare_parameter('min_neighbor_distance', 0.4)
+        self.declare_parameter('staging_gain', 0.5)
 
         self.robot          = str(self.get_parameter('robot').value)
         self.hover_height   = float(self.get_parameter('hover_height').value)
@@ -41,6 +46,11 @@ class FollowUnicycleEncirclement(Node):
         self.n_agents       = int(self.get_parameter('number_of_agents').value)
         self.k_phi          = float(self.get_parameter('k_phi').value)
         self.frame_id       = str(self.get_parameter('frame_id').value)
+        
+        # Get staged approach parameters
+        self.approach_tolerance     = float(self.get_parameter('approach_tolerance').value)
+        self.min_neighbor_distance  = float(self.get_parameter('min_neighbor_distance').value)
+        self.staging_gain           = float(self.get_parameter('staging_gain').value)
 
         # Filters parameters
         self.declare_parameter('P', [1.0, 1.0, 0.15, 0.5, 0.2])
@@ -95,6 +105,9 @@ class FollowUnicycleEncirclement(Node):
         self.i_takeoff = 0
         self.state = 0
         # 0-take-off, 1-hover, 2-encirclement, 3-landing
+        
+        self.encirclement_stage = 0
+        # 0-approach (position without phase control), 1-full encirclement (with phase control)
 
         # ----------------------------------------------------------------------
         # Subscribers
@@ -459,6 +472,7 @@ class FollowUnicycleEncirclement(Node):
 
     def _encircle_callback(self, msg):
         ''' Callback to initiate encirclement procedure. '''
+        self.encirclement_stage = 0  # Start with approach phase
         self.state = 2
 
     def hover(self):
@@ -528,6 +542,34 @@ class FollowUnicycleEncirclement(Node):
         T_des = self.T_init @ T_set_point
         r_des = T_des[0:3, 3] 
         return r_des
+    
+    def _check_approach_complete(self, center_pos: np.ndarray, dist_to_limo: float) -> bool:
+        ''' Check if approach phase is complete and ready for full encirclement. '''
+        # Condition 1: Distance to limo center within tolerance
+        radius_error = abs(dist_to_limo - self.radius_nominal)
+        at_nominal_radius = radius_error < self.approach_tolerance
+        
+        # Condition 2 & 3: Check distances to neighbors
+        safe_from_neighbors = True
+        
+        if self.FOLLOWER_pose is not None and self.LEADER_pose is not None:
+            # Distance to follower in current frame
+            follower_dist = np.linalg.norm([
+                self.FOLLOWER_pose.pose.position.x,
+                self.FOLLOWER_pose.pose.position.y
+            ])
+            
+            # Distance to leader in current frame
+            leader_dist = np.linalg.norm([
+                self.LEADER_pose.pose.position.x,
+                self.LEADER_pose.pose.position.y
+            ])
+            
+            # Both neighbors must be at safe distance
+            safe_from_neighbors = (follower_dist > self.min_neighbor_distance and 
+                                   leader_dist > self.min_neighbor_distance)
+        
+        return at_nominal_radius and safe_from_neighbors
 
 
 def main():
