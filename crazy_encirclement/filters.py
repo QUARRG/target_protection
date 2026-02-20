@@ -724,6 +724,9 @@ class FilterRelativeII:
 
         self.I = np.eye(2)
 
+        self.pub_phase_diff_succ = self.node.create_publisher(Float32, f'/{self.name}/filtered/phase_diff/succ', 10)
+        self.pub_phase_diff_pred = self.node.create_publisher(Float32, f'/{self.name}/filtered/phase_diff/pred', 10)
+
     def predict(self, dt: float):
         ''' 
         Prediction Step:
@@ -734,6 +737,15 @@ class FilterRelativeII:
         
         # Covariance: P = P + Q * dt
         self.P = self.P + self.Q * dt
+
+        # Publishing states
+        phase_diff_succ = Float32()
+        phase_diff_succ.data = self.x[0]
+        self.pub_phase_diff_succ.publish(phase_diff_succ)
+
+        phase_diff_pred = Float32()
+        phase_diff_pred.data = self.x[1]
+        self.pub_phase_diff_pred.publish(phase_diff_pred)
         
         return self.get_state()
 
@@ -759,24 +771,27 @@ class FilterRelativeII:
         # 1. Prepare Measurement Vector
         z_meas = []
         
+        # Vector from Center (Limo) to Ego
+        # vec_ego_to_limo is the global position of limo, p_drone is the global position of ego
+        v_center_to_ego = p_drone - vec_ego_to_limo
+        
         # --- Predecessor Logic ---
-        # Vector Center -> Ego
-        v_radius_ego = -vec_ego_to_limo
-        
         # Vector Center -> Pred
-        # (Ego->Pred) - (Ego->Limo) = (Pred - Ego) - (Limo - Ego) = Pred - Limo
-        v_radius_pred = vec_ego_to_pred - vec_ego_to_limo
+        v_center_to_pred = vec_ego_to_pred - vec_ego_to_limo
         
-        # Calculate Signed Angle
-        meas_pred = self._get_signed_angle(v_radius_ego, v_radius_pred)
+        # Calculate Signed Angle from Pred to Ego (gives ego_phase - pred_phase)
+        # For counterclockwise rotation with pred behind ego, this should be positive
+        meas_pred = self._get_signed_angle(v_center_to_pred, v_center_to_ego)
         
         z_meas.append(meas_pred)
 
         # --- Successor Logic ---
-        v_radius_ego = -vec_ego_to_limo
-        v_radius_succ = vec_ego_to_succ - vec_ego_to_limo
+        # Vector Center -> Succ
+        v_center_to_succ = vec_ego_to_succ - vec_ego_to_limo
         
-        meas_succ = self._get_signed_angle(v_radius_ego, v_radius_succ)
+        # Calculate Signed Angle from Ego to Succ (gives succ_phase - ego_phase)
+        # For counterclockwise rotation with succ ahead of ego, this should be positive
+        meas_succ = self._get_signed_angle(v_center_to_ego, v_center_to_succ)
         
         z_meas.append(meas_succ)
 

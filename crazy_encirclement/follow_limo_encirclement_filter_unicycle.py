@@ -231,6 +231,7 @@ class FollowUnicycleEncirclement(Node):
         
         # Crazyflie position command publisher
         self.position_pub = self.create_publisher(Position, f'/{self.robot}/cmd_position', 10)
+        self.omega_pub = self.create_publisher(Float32, f'/{self.robot}/omega_d', 10)
 
         # Timer of the main loop
         self.timer = self.create_timer(self.timer_period, self.timer_callback)
@@ -255,6 +256,7 @@ class FollowUnicycleEncirclement(Node):
 
             # Hover state
             elif self.state == 1:
+                _ = self.filter_relative.predict(self.timer_period)
                 self.hover()
 
             # Following LIMO
@@ -264,10 +266,11 @@ class FollowUnicycleEncirclement(Node):
                 limo_state = self.filter_unicycle.predict(self.timer_period)
                 center_pos = np.array(limo_state['position']) 
                 center_z   = limo_state['z_ground']
+                d_phis = self.filter_relative.predict(self.timer_period)
 
                 # 2. Get Phase Errors (Filter 2)
                 # These are the angular gaps to your neighbors
-                d_phis = self.filter_relative.get_state()
+                # d_phis = self.filter_relative.get_state()
                 d_phi_pred, d_phi_succ = d_phis['pred'], d_phis['succ']
                 
                 # --- B. CONTROL ---
@@ -288,6 +291,11 @@ class FollowUnicycleEncirclement(Node):
                 # This replaces the "Rc @ exp(omega)" logic from the old filter
                 rotation_speed = self.omega_nominal + u_correction
                 self.alpha += rotation_speed * self.timer_period
+
+                # Publishing omega
+                omega_d = Float32()
+                omega_d.data = rotation_speed
+                self.omega_pub.publish(omega_d)
                 
                 # Wrap to [-pi, pi]
                 self.alpha = wrap_to_pi(self.alpha)
@@ -333,23 +341,29 @@ class FollowUnicycleEncirclement(Node):
                 # Relative pose of the leader in the current robot frame
                 self.LEADER_pose = pose
 
-        # Update filter unicycle with new measurement
+        # Getting measurements
         if self.LIMO_pose is not None and \
             self.FOLLOWER_pose is not None and \
-            self.LEADER_pose is not None and \
-            self.state == 2:
+            self.LEADER_pose is not None:
 
             measurement_limo = np.array([self.LIMO_pose.pose.position.x, self.LIMO_pose.pose.position.y, self.LIMO_pose.pose.position.z])
             measurement_pred = np.array([self.FOLLOWER_pose.pose.position.x, self.FOLLOWER_pose.pose.position.y, self.FOLLOWER_pose.pose.position.z])
             measurement_succ = np.array([self.LEADER_pose.pose.position.x, self.LEADER_pose.pose.position.y, self.LEADER_pose.pose.position.z])
 
-            # Current pose in the initial frame
-            T_curr_robot = np.linalg.inv(self.T_init) @ self.T_curr
-            self.filter_unicycle.update(measurement_limo, T_curr_robot[0:3, 0:3], T_curr_robot[0:3, 3])
-            
-            # Current pose in the initial frame
-            T_curr_robot = np.linalg.inv(self.T_init) @ self.T_curr
-            self.filter_relative.update(measurement_limo, measurement_pred, measurement_succ, T_curr_robot[0:3, 0:3], T_curr_robot[0:3, 3])
+            # Updating filters
+            if self.state == 1:
+                # Current pose in the initial frame
+                T_curr_robot = np.linalg.inv(self.T_init) @ self.T_curr
+                self.filter_relative.update(measurement_limo, measurement_pred, measurement_succ, T_curr_robot[0:3, 0:3], T_curr_robot[0:3, 3])
+
+            elif self.state == 1 or self.state == 2:
+                # Current pose in the initial frame
+                T_curr_robot = np.linalg.inv(self.T_init) @ self.T_curr
+                self.filter_unicycle.update(measurement_limo, T_curr_robot[0:3, 0:3], T_curr_robot[0:3, 3])
+
+                # Current pose in the initial frame
+                T_curr_robot = np.linalg.inv(self.T_init) @ self.T_curr
+                self.filter_relative.update(measurement_limo, measurement_pred, measurement_succ, T_curr_robot[0:3, 0:3], T_curr_robot[0:3, 3])             
 
     def _poses_changed(self, msg):
         """ Topic update callback to the motion capture lib's
@@ -385,23 +399,23 @@ class FollowUnicycleEncirclement(Node):
 
     def _order_callback(self, msg: StringArray):
         ''' Callback to receive the order of agents. '''
-        if not self.has_order:
+        # if not self.has_order:
             # self.info(f"Phase received: {msg.data}")
-            order = msg.data
-            for robot in order:
-                if robot == self.robot:
-                    i = order.index(robot)
-                    if i == 0:
-                        self.leader = order[self.n_agents-1]
-                        self.follower = order[i+1]
-                    elif i == (self.n_agents-1):
-                        self.leader = order[i-1]
-                        self.follower = order[0]
-                    else:
-                        self.leader = order[i-1]
-                        self.follower = order[i+1]
-            self.has_order = True
-            # self.info(f'Order received - Leader ({self.leader}) | Follower ({self.follower})')
+        order = msg.data
+        for robot in order:
+            if robot == self.robot:
+                i = order.index(robot)
+                if i == 0:
+                    self.leader = order[self.n_agents-1]
+                    self.follower = order[i+1]
+                elif i == (self.n_agents-1):
+                    self.leader = order[i-1]
+                    self.follower = order[0]
+                else:
+                    self.leader = order[i-1]
+                    self.follower = order[i+1]
+        self.has_order = True
+        # self.info(f'Order received - Leader ({self.leader}) | Follower ({self.follower})')
 
     def takeoff(self):
         ''' Take-off procedure to reach the hover height. '''
