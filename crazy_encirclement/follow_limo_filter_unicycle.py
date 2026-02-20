@@ -178,8 +178,6 @@ class FollowUnicycle(Node):
         # Crazyflie position command publisher
         self.position_pub = self.create_publisher(Position, f'/{self.robot}/cmd_position', 10)
 
-        # Timer of the main loop
-        self.timer = self.create_timer(self.timer_period, self.timer_callback)
         
         # Arming all drones
         if swarm:
@@ -200,6 +198,8 @@ class FollowUnicycle(Node):
         self.arm()
         time.sleep(2)
 
+        # Timer of the main loop
+        self.timer = self.create_timer(self.timer_period, self.timer_callback)
     def timer_callback(self):
         ''' Timer callback to send position commands to the crazyflie based on the current state. '''
         try:
@@ -320,7 +320,7 @@ class FollowUnicycle(Node):
             self.t_landing = np.arange(self.T_final[2, 3], self.T_init[2, 3], -0.01)
         except Exception as e:
             self.info(f"Error in landing trajectory generation: {e}")
-            self.t_landing = np.arange(t_max, 0.1, -self.timer_period)
+            self.t_landing = np.arange(t_max, 0.0, -self.timer_period)
 
         self.info(f'Landing trajectory time steps: {self.t_landing}')
         self.i_landing = 0

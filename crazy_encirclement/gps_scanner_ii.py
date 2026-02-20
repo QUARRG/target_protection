@@ -7,7 +7,7 @@ from crazyflie_interfaces.msg import Position
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy, QoSDurabilityPolicy
 from rclpy.duration import Duration
 from scipy.spatial.transform import Rotation as R
-
+import time
 
 class GPSScannerNodeII(Node):
     def __init__(self):
@@ -53,7 +53,6 @@ class GPSScannerNodeII(Node):
             f'/{self.robot}/initial_pose', 
             initial_pose_qos
         )
-
         # Log initialization
         self.get_logger().info(f'GPS Scanner Node II initialized for robot: {self.robot} with update rate: {self.update_hz} Hz')
 
@@ -98,7 +97,7 @@ class GPSScannerNodeII(Node):
                     initial_pose_msg.pose.orientation.z = q_init[2]
                     initial_pose_msg.pose.orientation.w = q_init[3]
                     self.initial_pose_pub.publish(initial_pose_msg)
-
+                    self.get_logger().info(f'initial pose {initial_pose_msg}')
                 # Compute relative ego pose to initial pose using SE(3) operations
                 T_ego[0:3, 0:3] = R.from_quat([pose.pose.orientation.x, pose.pose.orientation.y,
                                                pose.pose.orientation.z, pose.pose.orientation.w]).as_matrix()

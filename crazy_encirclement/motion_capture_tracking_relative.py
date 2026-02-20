@@ -15,7 +15,7 @@ class MocapRelative(Node):
         # Initial parameters
         self.declare_parameter('update_hz', 200.0)
         self.declare_parameter('reference_object', 'LIMO')
-        self.declare_parameter('evader', 'C24') #the evader position will not be relatve
+        self.declare_parameter('evader', 'C20') #the evader position will not be relatve
         self.declare_parameter('pursuers', ['C23','C24'])
         self.update_hz = self.get_parameter('update_hz').get_parameter_value().double_value
         self.reference = self.get_parameter('reference_object').get_parameter_value().string_value

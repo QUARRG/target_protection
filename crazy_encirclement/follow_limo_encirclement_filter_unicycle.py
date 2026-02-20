@@ -245,9 +245,6 @@ class FollowUnicycleEncirclement(Node):
         # Crazyflie position command publisher
         self.position_pub = self.create_publisher(Position, f'/{self.robot}/cmd_position', 10)
         self.omega_pub = self.create_publisher(Float32, f'/{self.robot}/omega_d', 10)
-
-        # Timer of the main loop
-        self.timer = self.create_timer(self.timer_period, self.timer_callback)
         
         # Arming all drones
         self.arm_client = self.create_client(Arm, self.robot + '/arm')
@@ -258,7 +255,8 @@ class FollowUnicycleEncirclement(Node):
         time.sleep(2)
 
         self.info('Follow unicycle encirclement node has been started.')
-
+        # Timer of the main loop
+        self.timer = self.create_timer(self.timer_period, self.timer_callback)
     def timer_callback(self):
         ''' Timer callback to send position commands to the crazyflie based on the current state. '''
         try:
@@ -364,11 +362,11 @@ class FollowUnicycleEncirclement(Node):
             measurement_limo = np.array([self.LIMO_pose.pose.position.x, self.LIMO_pose.pose.position.y, self.LIMO_pose.pose.position.z])
             measurement_limo += measurement_limo_noise
             
-            measurement_pred_noise = np.random.multivariate_normal(np.zeros(2), np.diag(np.square(self.V_rel_list)))
+            measurement_pred_noise = np.random.multivariate_normal(np.zeros(3), np.diag(np.square(self.V_rel_list)))
             measurement_pred = np.array([self.FOLLOWER_pose.pose.position.x, self.FOLLOWER_pose.pose.position.y, self.FOLLOWER_pose.pose.position.z])
             measurement_pred += measurement_pred_noise
             
-            measurement_succ_noise = np.random.multivariate_normal(np.zeros(2), np.diag(np.square(self.V_rel_list)))
+            measurement_succ_noise = np.random.multivariate_normal(np.zeros(3), np.diag(np.square(self.V_rel_list)))
             measurement_succ = np.array([self.LEADER_pose.pose.position.x, self.LEADER_pose.pose.position.y, self.LEADER_pose.pose.position.z])
             measurement_succ += measurement_succ_noise
 

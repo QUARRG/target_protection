@@ -28,7 +28,7 @@ class Follow_Limo(Node):
 
         # Parameters
         self.declare_parameter('robot', 'C20')
-        self.declare_parameter('hover_height', 0.5)
+        self.declare_parameter('hover_height', 0.3)
         self.declare_parameter('relative',False)
 
         self.robot    = str(self.get_parameter('robot').value)
@@ -53,7 +53,7 @@ class Follow_Limo(Node):
         self.previous_pose = np.zeros(3)
         self.previous_pose_time = 0.0
         self.initial_pose = np.zeros(3)
-        self.set_point = np.array([0,0,self.hover_height])
+        self.set_point = np.array([-0.2,-0.2,self.hover_height])
 
         self.i_landing = 0
         self.i_takeoff = 0
@@ -208,17 +208,18 @@ class Follow_Limo(Node):
 
     def landing_traj(self, t_max: float):
         ''' Landing trajectory generation. '''
-        self.t_landing = np.arange(t_max, -0.5, -self.timer_period)
+        self.t_landing = np.arange(t_max, 0, -self.timer_period)
+        self.info(f'len t landing {len(self.t_landing)}')
         self.i_landing = 0
-        double = int(2*len(self.t_landing))
+        double = int(len(self.t_landing))
         self.r_landing = np.zeros((3,double))
         half = len(self.t_landing)
-        self.r_landing[0,0:half] = self.initial_pose[0] * np.ones(half)
-        self.r_landing[1,0:half] = self.initial_pose[1] * np.ones(half)
-        self.r_landing[2,0:half] = self.hover_height * np.ones(half)
-        self.r_landing[0,half:] = self.final_pose[0] * np.ones(half)
-        self.r_landing[1,half:] = self.final_pose[1] * np.ones(half)
-        self.r_landing[2,half:] = self.final_pose[2] * (self.t_landing / t_max)
+        self.r_landing[0,:] = self.initial_pose[0] * np.ones(half)
+        self.r_landing[1,:] = self.initial_pose[1] * np.ones(half)
+        self.r_landing[2,:] = self.hover_height * (self.t_landing / t_max)
+        # self.r_landing[0,half:] = self.final_pose[0] * np.ones(half)
+        # self.r_landing[1,half:] = self.final_pose[1] * np.ones(half)
+        # self.r_landing[2,half:] = self.final_pose[2] * (self.t_landing / t_max)
 
     def arm(self):
         ''' Reboot the system. '''
@@ -256,6 +257,7 @@ class Follow_Limo(Node):
 
     def landing(self):
         ''' Landing procedure to reach the ground. '''
+        self.info(f'land {self.r_landing[:, self.i_landing]}, i landing {self.i_landing}')
         self.send_position(self.r_landing[:, self.i_landing])
 
     def reboot(self):
