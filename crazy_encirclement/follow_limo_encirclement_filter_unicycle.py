@@ -33,6 +33,8 @@ class FollowUnicycleEncirclement(Node):
         self.declare_parameter('omega_nominal', 0.5)
         self.declare_parameter('k_phi', 1.0)
         self.declare_parameter('frame_id', 'world')
+        self.declare_parameter('target', 'LIMO')
+        
         
         # Staged approach parameters
         self.declare_parameter('approach_tolerance', 0.15)
@@ -46,6 +48,7 @@ class FollowUnicycleEncirclement(Node):
         self.n_agents       = int(self.get_parameter('number_of_agents').value)
         self.k_phi          = float(self.get_parameter('k_phi').value)
         self.frame_id       = str(self.get_parameter('frame_id').value)
+        self.target      = str(self.get_parameter('target').value)
         
         # Get staged approach parameters
         self.approach_tolerance     = float(self.get_parameter('approach_tolerance').value)
@@ -57,9 +60,9 @@ class FollowUnicycleEncirclement(Node):
         self.declare_parameter('Q', [0.1, 0.1, 0.01, 0.05, 0.1])
         self.declare_parameter('V', [0.1, 0.1, 0.1])
 
-        self.declare_parameter('P_rel', [0.1, 0.1])
-        self.declare_parameter('Q_rel', [0.01, 0.01])
-        self.declare_parameter('V_rel', [0.1, 0.1])
+        self.declare_parameter('P_rel', [0.1, 0.1, 0.1])
+        self.declare_parameter('Q_rel', [0.01, 0.01, 0.01])
+        self.declare_parameter('V_rel', [0.1, 0.1, 0.1])
 
         self.declare_parameter('predict_hz', 100.0)
         self.declare_parameter('update_hz', 10.0)
@@ -311,6 +314,7 @@ class FollowUnicycleEncirclement(Node):
                 omega_d = Float32()
                 omega_d.data = rotation_speed
                 self.omega_pub.publish(omega_d)
+                self.info(f'angular velocity {rotation_speed}')
 
                 # --- C. TRAJECTORY GENERATION ---
                 # 5. Polar -> Cartesian (Global Frame)
@@ -343,7 +347,7 @@ class FollowUnicycleEncirclement(Node):
         ''' Callback to update the filter with new GPS measurements. '''
         # Extract measurement for the robot
         for pose in msg.poses:
-            if 'limo' in pose.name.lower():
+            if self.target in pose.name:
                 # Relative pose of LIMO in the current robot frame
                 self.LIMO_pose = pose
             if pose.name == self.follower:
@@ -405,17 +409,14 @@ class FollowUnicycleEncirclement(Node):
 
                 # Set final pose when landing is commanded
                 if (self.has_final == False) and (self.land_flag == True):
-                    # Difference between current and initial positions (ignoring orientation)
-                    position_diff = np.linalg.norm(self.T_init[0:3, 3] - self.T_curr[0:3, 3])
-                    # self.info(f'Position difference: {position_diff:.3f} m')
-
-                    if position_diff < self.hover_height * 1.05:  # Threshold of 0.1 meters
-                        self.T_final = self.T_curr.copy()
-                        self.info("Landing...")
-                        self.landing_traj(3)
-                        self.has_final = True
-                    else:
-                        self.send_position(np.array([self.T_init[0, 3], self.T_init[1, 3], self.T_init[2, 3] + self.hover_height]))
+                    self.final_pose = np.zeros(3)
+                    self.info("Landing...")
+                    self.final_pose[0] = robot_pose.pose.position.x
+                    self.final_pose[1] = robot_pose.pose.position.y
+                    self.final_pose[2] = robot_pose.pose.position.z
+                    self.landing_traj(3)
+                    self.has_final = True
+                    self.state = 3
 
     def _order_callback(self, msg: StringArray):
         ''' Callback to receive the order of agents. '''
@@ -459,18 +460,17 @@ class FollowUnicycleEncirclement(Node):
     def landing_traj(self, t_max: float):
         ''' Landing trajectory generation. '''
         # self.t_landing = np.arange(t_max, 0.1, -self.timer_period)
-        try:
-            self.t_landing = np.arange(self.T_final[2, 3], self.T_init[2, 3], -0.01)
-        except Exception as e:
-            self.info(f"Error in landing trajectory generation: {e}")
-            self.t_landing = np.arange(t_max, 0.1, -self.timer_period)
+        # try:
+        #     self.t_landing = np.arange(self.T_final[2, 3], self.T_init[2, 3], -0.01)
+        # except Exception as e:
+        #     self.info(f"Error in landing trajectory generation: {e}")
+        self.t_landing = np.arange(t_max, 0.0, -self.timer_period)
 
-        self.info(f'Landing trajectory time steps: {self.t_landing}')
         self.i_landing = 0
         self.r_landing = np.zeros((3, len(self.t_landing)))
-        self.r_landing[0,:] = self.T_final[0, 3] * np.ones(len(self.t_landing))
-        self.r_landing[1,:] = self.T_final[1, 3] * np.ones(len(self.t_landing))
-        self.r_landing[2,:] = self.t_landing  #self.T_final[2, 3] * (self.t_landing / t_max)
+        self.r_landing[0,:] += self.final_pose[0] * np.ones(len(self.t_landing))
+        self.r_landing[1,:] += self.final_pose[1] * np.ones(len(self.t_landing))
+        self.r_landing[2,:] = self.final_pose[2] * (self.t_landing / t_max)
 
     def _landing_callback(self, msg):
         ''' Callback to initiate landing procedure. '''
@@ -480,6 +480,7 @@ class FollowUnicycleEncirclement(Node):
     def _encircle_callback(self, msg):
         ''' Callback to initiate encirclement procedure. '''
         self.encirclement_stage = 0  # Start with approach phase
+        self.hover_height = 0
         self.state = 2
 
     def hover(self):

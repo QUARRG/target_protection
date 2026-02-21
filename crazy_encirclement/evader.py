@@ -23,11 +23,11 @@ class Evader(Node):
         
 
         # Parameters
-        self.declare_parameter('robot', 'C24')
-        self.declare_parameter('hover_height', 0.8)
+        self.declare_parameter('robot', 'C23')
+        self.declare_parameter('hover_height', 0.3)
         self.declare_parameter('frame_id', 'world')
         self.declare_parameter('target', 'LIMO')
-        self.declare_parameter('trajectory','follow_limo')
+        self.declare_parameter('trajectory','back_forth')
 
         self.robot    = str(self.get_parameter('robot').value)
         self.hover_height = float(self.get_parameter('hover_height').value)
@@ -39,7 +39,7 @@ class Evader(Node):
         self.reboot_client = self.create_client(Empty, self.robot + '/reboot')
 
         # Flags and variables
-        self.timer_period = 0.01
+        self.timer_period = 0.1
         if self.trajectory == 'eight':
             A = 0.8      # amplitude
             w = 0.5      # frequency
@@ -51,6 +51,12 @@ class Evader(Node):
             self.x = A*np.cos(w*self.t)
             self.y = A*np.sin(w*self.t)*np.cos(w*self.t)
             self.index = 0
+        elif self.trajectory == 'back_forth':
+            self.x = np.arange(-1, 1, 0.02)
+            self.y = np.zeros_like(self.x)
+            self.index = 0
+            self.increment = 1
+
         self.initial_pose = np.zeros(3)
         self.order = []
 
@@ -95,7 +101,7 @@ class Evader(Node):
         )
         # Subscription to Vicon positions of the robot that are coming from the gps node
         self.create_subscription(
-            NamedPoseArray, '/poses_relative',
+            NamedPoseArray, '/poses',
             self._poses_changed,
             qos_profile
         )
@@ -119,7 +125,6 @@ class Evader(Node):
         self.info('Evader node has been started.')
 
     def timer_callback(self):
-        self.info(f'state {self.state} outside if')
         ''' Timer callback to send position commands to the crazyflie based on the current state. '''
         try:
 
@@ -143,6 +148,13 @@ class Evader(Node):
                         self.index = 0
                     self.send_position(np.array([self.x[self.index], self.y[self.index], self.hover_height]))
                     self.index +=1
+                elif self.trajectory == 'back_forth':
+                    if self.index >= (len(self.x)-1):
+                        self.increment = -1
+                    if self.index <= 0:
+                        self.increment = 1
+                    self.send_position(np.array([self.x[self.index], self.y[self.index], self.hover_height]))
+                    self.index +=self.increment
             
             # Landing state
             elif self.state == 3:
@@ -198,7 +210,6 @@ class Evader(Node):
     def takeoff(self):
         ''' Take-off procedure to reach the hover height. '''
         self.send_position(self.r_takeoff[:, self.i_takeoff])
-        self.info(f'position {self.r_takeoff[:, self.i_takeoff]}')
         # Increment take-off index or switch to hover state
         if self.i_takeoff < len(self.t_takeoff)-1:
             self.i_takeoff += 1

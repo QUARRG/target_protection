@@ -98,10 +98,21 @@ def parse_yaml(context):
 
     with open(filter_yaml, 'r') as ymlfile:
         filter_yaml_content = yaml.safe_load(ymlfile)
-
+    robots_list = []
     # Listing all enabled robots
-    robots_list = [robot for robot in crazyflies['robots'] if crazyflies['robots'][robot]['enabled']]
-
+    for robot in crazyflies['robots']:
+        if crazyflies['robots'][robot]['enabled']:
+            if crazyflies['robots'][robot]['role'] == 'pursuer':
+                robots_list.append(robot)
+            elif crazyflies['robots'][robot]['role'] == 'evader':
+                evader = robot
+    Nodes.append(Node(
+        package='crazy_encirclement',
+        executable='evader',
+        name=robot+'evader',
+        output='screen',
+        parameters=[{'evader': evader}]
+    ))
     for robot in robots_list:
         # Nodes for each robot
         Nodes.append(Node(
@@ -109,7 +120,7 @@ def parse_yaml(context):
             executable='follow_limo_encirclement_filter_unicycle',
             name=robot+'_follow_limo_encirclement_filter_unicycle',
             output='screen',
-            parameters=[{'robot': robot, 'number_of_agents': len(robots_list)} | filter_yaml_content.get('FilterRelativeII', {})]
+            parameters=[{'robot': robot, 'number_of_agents': len(robots_list), 'target': evader} | filter_yaml_content.get('FilterRelativeII', {})]
         ))
 
         # GPS/Scanner II Node for each robot
