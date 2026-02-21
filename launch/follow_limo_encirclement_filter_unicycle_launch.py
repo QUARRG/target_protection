@@ -99,6 +99,7 @@ def parse_yaml(context):
     with open(filter_yaml, 'r') as ymlfile:
         filter_yaml_content = yaml.safe_load(ymlfile)
     robots_list = []
+    evader = None
     # Listing all enabled robots
     for robot in crazyflies['robots']:
         if crazyflies['robots'][robot]['enabled']:
@@ -106,13 +107,7 @@ def parse_yaml(context):
                 robots_list.append(robot)
             elif crazyflies['robots'][robot]['role'] == 'evader':
                 evader = robot
-    Nodes.append(Node(
-        package='crazy_encirclement',
-        executable='evader',
-        name=robot+'evader',
-        output='screen',
-        parameters=[{'evader': evader}]
-    ))
+
     for robot in robots_list:
         # Nodes for each robot
         Nodes.append(Node(
@@ -140,7 +135,22 @@ def parse_yaml(context):
             output='screen',
             parameters=[{'robot_prefix': robot}]
         ))
-
+    if evader:
+        # Watch dog node for evader robot
+        Nodes.append(Node(
+            package='crazyflie',
+            executable='watch_dog.py',
+            name=robot+'_watch_dog',
+            output='screen',
+            parameters=[{'robot_prefix': evader}]
+            ))
+        Nodes.append(Node(
+            package='crazy_encirclement',
+            executable='evader',
+            name=robot+'_evader',
+            output='screen',
+            parameters=[{'evader': evader}]
+        ))
     # Agents order node
     Nodes.append(Node(
         package='crazy_encirclement',
