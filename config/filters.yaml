@@ -61,11 +61,11 @@ FilterRelativeII:
   V_rel: [0.01, 0.01]    # rad, rad
   # Other parameters
   predict_hz: 100.0
-  update_hz: 10.0
+  update_hz: 20.0
   seed: 10
   frame_id: world
-  radius_nominal: 0.8  # meters
-  omega_nominal: 0.2   # radians per second
+  radius_nominal: 0.5  # meters
+  omega_nominal: 0.4   # radians per second
   hover_height: 0.3    # meters
   encirclement_height: 0.3 # meters
   zupt_threshold: 0.01     # m/s

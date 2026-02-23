@@ -82,7 +82,7 @@ class GPSScannerNodeII(Node):
                     self.T_init[1, 3] = pose.pose.position.y
                     self.T_init[2, 3] = pose.pose.position.z
                     self.initial_pose_initialized = True
-                    self.get_logger().info(f'Initial pose captured:\n{self.T_init}')
+                    # self.get_logger().info(f'Initial pose captured:\n{self.T_init}')
                     
                     # Publish initial pose on latching topic
                     initial_pose_msg = PoseStamped()
@@ -97,7 +97,7 @@ class GPSScannerNodeII(Node):
                     initial_pose_msg.pose.orientation.z = q_init[2]
                     initial_pose_msg.pose.orientation.w = q_init[3]
                     self.initial_pose_pub.publish(initial_pose_msg)
-                    self.get_logger().info(f'initial pose {initial_pose_msg}')
+                    # self.get_logger().info(f'initial pose {initial_pose_msg}')
                 # Compute relative ego pose to initial pose using SE(3) operations
                 T_ego[0:3, 0:3] = R.from_quat([pose.pose.orientation.x, pose.pose.orientation.y,
                                                pose.pose.orientation.z, pose.pose.orientation.w]).as_matrix()

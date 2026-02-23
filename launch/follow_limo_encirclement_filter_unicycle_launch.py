@@ -98,8 +98,9 @@ def parse_yaml(context):
 
     with open(filter_yaml, 'r') as ymlfile:
         filter_yaml_content = yaml.safe_load(ymlfile)
+
     robots_list = []
-    evader = None
+    evader = None  #'LIMO'
     # Listing all enabled robots
     for robot in crazyflies['robots']:
         if crazyflies['robots'][robot]['enabled']:
@@ -107,6 +108,8 @@ def parse_yaml(context):
                 robots_list.append(robot)
             elif crazyflies['robots'][robot]['role'] == 'evader':
                 evader = robot
+    
+    print(f'Robots in the encirclement: {robots_list}, Evader: {evader}')
 
     for robot in robots_list:
         # Nodes for each robot
@@ -119,12 +122,13 @@ def parse_yaml(context):
         ))
 
         # GPS/Scanner II Node for each robot
+        scanner_update_hz = filter_yaml_content.get('FilterRelativeII', {}).get('update_hz', 10.0)
         Nodes.append(Node(
             package='crazy_encirclement',
             executable='gps_scanner_ii',
             name=robot+'_gps_scanner_ii_node',
             output='screen',
-            parameters=[{'robot': robot}],
+            parameters=[{'robot': robot, 'update_hz': scanner_update_hz}],
         ))
 
         # Watch dog node for each robot
@@ -135,22 +139,24 @@ def parse_yaml(context):
             output='screen',
             parameters=[{'robot_prefix': robot}]
         ))
-    if evader:
+
+    if evader != 'LIMO':
         # Watch dog node for evader robot
         Nodes.append(Node(
             package='crazyflie',
             executable='watch_dog.py',
-            name=robot+'_watch_dog',
+            name=evader+'_watch_dog',
             output='screen',
             parameters=[{'robot_prefix': evader}]
             ))
         Nodes.append(Node(
             package='crazy_encirclement',
             executable='evader',
-            name=robot+'_evader',
+            name=evader+'_evader',
             output='screen',
             parameters=[{'evader': evader}]
         ))
+        
     # Agents order node
     Nodes.append(Node(
         package='crazy_encirclement',

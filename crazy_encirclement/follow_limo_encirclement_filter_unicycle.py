@@ -42,7 +42,7 @@ class FollowUnicycleEncirclement(Node):
         self.n_agents       = int(self.get_parameter('number_of_agents').value)
         self.k_phi          = float(self.get_parameter('k_phi').value)
         self.frame_id       = str(self.get_parameter('frame_id').value)
-        self.target         = 'LIMO'   #str(self.get_parameter('target').value)
+        self.target         = str(self.get_parameter('target').value)
 
         # Filters parameters
         self.declare_parameter('P', [1.0, 1.0, 0.15, 0.5, 0.2])
@@ -127,6 +127,7 @@ class FollowUnicycleEncirclement(Node):
         # Wait until order is received
         while (not self.has_order):
             rclpy.spin_once(self, timeout_sec=0.1)
+        self.info(f'Order received - Leader ({self.leader}) | Follower ({self.follower})')
         
         # Subscribe to motion capture poses
         qos_profile = QoSProfile(reliability =QoSReliabilityPolicy.BEST_EFFORT,
@@ -172,6 +173,7 @@ class FollowUnicycleEncirclement(Node):
         self.LIMO_pose = None
         while (self.LIMO_pose is None):
             rclpy.spin_once(self, timeout_sec=0.1)
+        self.info('LIMO pose received...')
 
         # Initializing filter Unicycle
         initialization_noise = np.random.multivariate_normal(np.zeros(len(self.P_list)), np.diag(np.square(self.P_list)))
@@ -211,6 +213,7 @@ class FollowUnicycleEncirclement(Node):
         self.LEADER_pose   = None
         while (self.FOLLOWER_pose is None or self.LEADER_pose is None):
             rclpy.spin_once(self, timeout_sec=0.1)
+        self.info('Follower and Leader poses received...')
 
         # Extract X, Y Positions (Not Orientations)
         limo_x = self.LIMO_pose.pose.position.x
@@ -303,9 +306,9 @@ class FollowUnicycleEncirclement(Node):
                 
                 # Follower pushes you (+), Leader blocks you (-)
                 phase_error = (1.0 / (d_behind + 1e-6)) - (1.0 / (d_ahead + 1e-6))
-                max_correction = self.omega_nominal * 1.5 
-                u_correction = np.clip(u_correction, -max_correction, max_correction)
                 u_correction = self.k_phi * phase_error
+                max_correction = self.omega_nominal * 3.5 
+                u_correction = np.clip(u_correction, -max_correction, max_correction)
 
                 # 4. INTEGRATE Virtual Phase
                 if self.alpha is None:
@@ -456,7 +459,6 @@ class FollowUnicycleEncirclement(Node):
                     self.leader = order[i-1]
                     self.follower = order[i+1]
         self.has_order = True
-        # self.info(f'Order received - Leader ({self.leader}) | Follower ({self.follower})')
 
     def takeoff(self):
         ''' Take-off procedure to reach the hover height. '''
@@ -555,7 +557,7 @@ class FollowUnicycleEncirclement(Node):
             self.T_init[0:3, 0:3] = R_mat
             self.takeoff_traj(4)
             self.has_initial_pose = True
-            self.info(f'Received initial pose from topic: {self.T_init[:3, 3]}')
+            # self.info(f'Received initial pose from topic: {self.T_init[:3, 3]}')
 
     def _get_desired_position(self, set_point: np.ndarray) -> np.ndarray:
         ''' Compute the desired position based on the current, final, and initial poses. '''
