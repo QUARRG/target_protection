@@ -32,15 +32,19 @@ class FollowUnicycleEncirclement(Node):
         self.declare_parameter('radius_nominal', 0.5)
         self.declare_parameter('omega_nominal', 0.5)
         self.declare_parameter('k_phi', 1.0)
+        self.declare_parameter('k_r', 1.0)
         self.declare_parameter('frame_id', 'world')
         self.declare_parameter('target', 'LIMO')
 
         self.robot          = str(self.get_parameter('robot').value)
         self.hover_height   = float(self.get_parameter('hover_height').value)
         self.radius_nominal = float(self.get_parameter('radius_nominal').value)
+        self.r              = float(self.get_parameter('radius_nominal').value)
         self.omega_nominal  = float(self.get_parameter('omega_nominal').value)
+        self.omega          = float(self.get_parameter('omega_nominal').value)
         self.n_agents       = int(self.get_parameter('number_of_agents').value)
         self.k_phi          = float(self.get_parameter('k_phi').value)
+        self.k_r            = float(self.get_parameter('k_r').value)
         self.frame_id       = str(self.get_parameter('frame_id').value)
         self.target         = str(self.get_parameter('target').value)
 
@@ -99,9 +103,6 @@ class FollowUnicycleEncirclement(Node):
         self.i_takeoff = 0
         self.state = 0
         # 0-take-off, 1-hover, 2-encirclement, 3-landing
-        
-        self.encirclement_stage = 0
-        # 0-approach (position without phase control), 1-full encirclement (with phase control)
 
         # ----------------------------------------------------------------------
         # Subscribers
@@ -287,6 +288,7 @@ class FollowUnicycleEncirclement(Node):
             # Hover state
             elif self.state == 1:
                 _ = self.filter_relative.predict(self.timer_period)
+                _ = self.filter_unicycle.predict(self.timer_period)
                 self.hover()
 
             # Following LIMO
@@ -303,10 +305,13 @@ class FollowUnicycleEncirclement(Node):
                 d_phis = self.filter_relative.predict(self.timer_period)
                 d_ahead  = d_phis['d_ahead']  # Distance to Leader
                 d_behind = d_phis['d_behind'] # Distance to Follower
+
+                # Computing adaptative omega nominal
+                self.omega = limo_state['linear_speed'] / self.r
                 
                 # Follower pushes you (+), Leader blocks you (-)
                 phase_error = (1.0 / (d_behind + 1e-6)) - (1.0 / (d_ahead + 1e-6))
-                u_correction = self.k_phi * phase_error
+                u_correction = self.k_phi * phase_error                
                 max_correction = self.omega_nominal * 3.5 
                 u_correction = np.clip(u_correction, -max_correction, max_correction)
 
@@ -318,25 +323,38 @@ class FollowUnicycleEncirclement(Node):
                                             curr_pos[0] - center_pos[0])
 
                 # Update the angle: Nominal Orbit + Feedback Correction
-                rotation_speed = self.omega_nominal + u_correction
+                rotation_speed = self.omega + u_correction
                 self.alpha += rotation_speed * self.timer_period
-                self.alpha = wrap_to_2pi(self.alpha)
 
                 # Publishing omega
                 omega_d = Float32()
                 omega_d.data = rotation_speed
                 self.omega_pub.publish(omega_d)
-                # self.info(f'angular velocity {rotation_speed}')
+                self.info(f'Angular velocity: {rotation_speed:.2f} rad/s, Phase error: {phase_error:.2f}, d_ahead: {d_ahead:.2f}, d_behind: {d_behind:.2f}')
 
                 # --- C. TRAJECTORY GENERATION ---
                 # 5. Polar -> Cartesian (Global Frame)
                 # This generates the moving setpoint on the circle
-                x_des = center_pos[0] + self.radius_nominal * np.cos(self.alpha)
-                y_des = center_pos[1] + self.radius_nominal * np.sin(self.alpha)
+                x_des = center_pos[0] + self.r * np.cos(self.alpha)
+                y_des = center_pos[1] + self.r * np.sin(self.alpha)
                 z_des = center_z      + self.encirclement_height
                 p_des = np.array([x_des, y_des, z_des])
 
+                # Computing adaptative radius nominal
+                dr = limo_state['linear_speed'] * self.timer_period
+                p  = np.array([self.r * np.cos(self.alpha), self.r * np.sin(self.alpha)])
+                if limo_state['linear_speed'] < self.zupt_threshold:
+                    v = np.array([0.0, 0.0])
+                else:
+                    v  = np.array([limo_state['linear_speed'] * np.cos(limo_state['heading']),
+                                limo_state['linear_speed'] * np.sin(limo_state['heading'])])
+                nominator = np.dot(p, v)
+                denominator = np.linalg.norm(p) * np.linalg.norm(v) + 1e-6
+                r_correction = self.k_r * dr * nominator / denominator
+                self.r = self.radius_nominal + np.clip(r_correction, 0.0, self.radius_nominal * 2.0)
+
                 # Desired position in the Vicon frame
+                self.alpha = wrap_to_2pi(self.alpha)
                 r_des = self._get_desired_position(p_des)   
                 self.send_position(r_des)
 

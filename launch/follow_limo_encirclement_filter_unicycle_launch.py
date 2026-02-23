@@ -100,7 +100,7 @@ def parse_yaml(context):
         filter_yaml_content = yaml.safe_load(ymlfile)
 
     robots_list = []
-    evader = None  #'LIMO'
+    evader = 'LIMO'
     # Listing all enabled robots
     for robot in crazyflies['robots']:
         if crazyflies['robots'][robot]['enabled']:
