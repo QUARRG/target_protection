@@ -695,8 +695,8 @@ class FilterUnicycle:
 
 class FilterRelativeII:
     ''' 
-    Estimates the phase difference to Predecessor and Successor.
-    State: [d_phi_pred, d_phi_succ]
+    Estimates the phase difference to the Leader (Ahead) and Follower (Behind).
+    State: [d_ahead, d_behind]
     '''
     def __init__(self, name: str, params: dict, node: Node):
         self.name = name
@@ -706,140 +706,112 @@ class FilterRelativeII:
         self.dim_state: int = 2
         self.dim_meas: int = 2
 
-        # 1. Initialize State: [delta_phi_pred, delta_phi_succ]
-        # Initial guess: 0.0 or a specific nominal separation (e.g., 2pi/N)
+        # Initialize State: [d_ahead, d_behind]
         self.x: np.ndarray = np.array(self.params.get('x_guess', [0.0, 0.0]), dtype=float)
 
-        # 2. Kalman Matrices
-        # P: Covariance
+        # Kalman Matrices
         self.P: np.ndarray = np.diag(np.square(self.params.get('P_rel', np.ones(self.dim_state) * 0.1)))
-        
-        # Q: Process Noise (State uncertainty growth)
-        # Small value allows the estimate to change slowly if formation shifts
         self.Q: np.ndarray = np.diag(np.square(self.params.get('Q_rel', np.ones(self.dim_state) * 0.01)))
-        
-        # R: Measurement Noise
-        # Trust in the camera/UWB measurements
         self.V: np.ndarray = np.diag(np.square(self.params.get('V_rel', np.ones(self.dim_meas) * 0.1)))
 
+        # Others
         self.I = np.eye(2)
 
-        self.pub_phase_diff_succ = self.node.create_publisher(Float32, f'/{self.name}/filtered/phase_diff/succ', 10)
-        self.pub_phase_diff_pred = self.node.create_publisher(Float32, f'/{self.name}/filtered/phase_diff/pred', 10)
+        # Rename publishers to leader/follower
+        self.pub_phase_diff_leader = self.node.create_publisher(Float32, f'/{self.name}/filtered/phase_diff/leader', 10)
+        self.pub_phase_diff_follower = self.node.create_publisher(Float32, f'/{self.name}/filtered/phase_diff/follower', 10)
 
     def predict(self, dt: float):
         ''' 
         Prediction Step:
         Model: Constant Relative Phase (d_phi_dot = 0)
-        We assume nominal speed is identical for all agents, so separation is constant.
         '''
-        # State: x_k = x_{k-1} (No change)
-        
         # Covariance: P = P + Q * dt
         self.P = self.P + self.Q * dt
 
         # Publishing states
-        phase_diff_succ = Float32()
-        phase_diff_succ.data = self.x[0]
-        self.pub_phase_diff_succ.publish(phase_diff_succ)
+        phase_diff_leader = Float32()
+        phase_diff_leader.data = float(self.x[0])
+        self.pub_phase_diff_leader.publish(phase_diff_leader)
 
-        phase_diff_pred = Float32()
-        phase_diff_pred.data = self.x[1]
-        self.pub_phase_diff_pred.publish(phase_diff_pred)
+        phase_diff_follower = Float32()
+        phase_diff_follower.data = float(self.x[1])
+        self.pub_phase_diff_follower.publish(phase_diff_follower)
         
         return self.get_state()
 
     def update(self, 
                vec_rel_ego_to_limo: np.ndarray, 
-               vec_rel_ego_to_pred: np.ndarray, 
-               vec_rel_ego_to_succ: np.ndarray,
-               R_drone: np.ndarray,
-               p_drone: np.ndarray):
+               vec_rel_ego_to_leader: np.ndarray, 
+               vec_rel_ego_to_follower: np.ndarray,
+               R_drone: np.ndarray):
         '''
-        Update Step using geometric measurements.
-        
-        Args:
-            vec_rel_ego_to_limo: Vector from Ego to Limo (BODY FRAME)
-            vec_rel_ego_to_pred: Vector from Ego to Predecessor (BODY FRAME)
-            vec_rel_ego_to_succ: Vector from Ego to Successor (BODY FRAME)
+        State: [d_ahead, d_behind] (Strictly positive angular distances)
         '''
-        # Transform relative vectors to Global Frame
-        vec_ego_to_limo = R_drone @ vec_rel_ego_to_limo + p_drone
-        vec_ego_to_pred = R_drone @ vec_rel_ego_to_pred + p_drone
-        vec_ego_to_succ = R_drone @ vec_rel_ego_to_succ + p_drone
+        # 1. Transform vectors to Global Aligned Frame (Do not add p_drone)
+        v_ego_to_center   = R_drone @ vec_rel_ego_to_limo 
+        v_ego_to_leader   = R_drone @ vec_rel_ego_to_leader
+        v_ego_to_follower = R_drone @ vec_rel_ego_to_follower
 
-        # 1. Prepare Measurement Vector
+        # 2. Get vectors FROM Center TO Drones
+        v_center_to_ego      = -v_ego_to_center
+        v_center_to_leader   = v_ego_to_leader - v_ego_to_center
+        v_center_to_follower = v_ego_to_follower - v_ego_to_center
+
+        # 3. Calculate Strictly Positive Angular Separations
         z_meas = []
         
-        # Vector from Center (Limo) to Ego
-        # vec_ego_to_limo is the global position of limo, p_drone is the global position of ego
-        v_center_to_ego = p_drone - vec_ego_to_limo
-        
-        # --- Predecessor Logic ---
-        # Vector Center -> Pred
-        v_center_to_pred = vec_ego_to_pred - vec_ego_to_limo
-        
-        # Calculate Signed Angle from Pred to Ego (gives ego_phase - pred_phase)
-        # For counterclockwise rotation with pred behind ego, this should be positive
-        meas_pred = self._get_signed_angle(v_center_to_pred, v_center_to_ego)
-        
-        z_meas.append(meas_pred)
+        # A. Distance AHEAD (From Ego to Leader)
+        # CCW angle from Ego to Leader
+        meas_ahead = self._get_signed_angle(v_center_to_ego, v_center_to_leader)
+        meas_ahead = wrap_to_2pi(meas_ahead) # Force to [0, 2pi)
+        z_meas.append(meas_ahead)
 
-        # --- Successor Logic ---
-        # Vector Center -> Succ
-        v_center_to_succ = vec_ego_to_succ - vec_ego_to_limo
-        
-        # Calculate Signed Angle from Ego to Succ (gives succ_phase - ego_phase)
-        # For counterclockwise rotation with succ ahead of ego, this should be positive
-        meas_succ = self._get_signed_angle(v_center_to_ego, v_center_to_succ)
-        
-        z_meas.append(meas_succ)
+        # B. Distance BEHIND (From Follower to Ego)
+        # CCW angle from Follower to Ego
+        meas_behind = self._get_signed_angle(v_center_to_follower, v_center_to_ego)
+        meas_behind = wrap_to_2pi(meas_behind) # Force to [0, 2pi)
+        z_meas.append(meas_behind)
 
-        # 2. Construct Matrices for Variable Dimension Update
         z = np.array(z_meas)
         H = self.I
         R = self.V
         
-        # 3. Kalman Gain
-        # S = H P H^T + R
+        # 4. Kalman Gain
         S = H @ self.P @ H.T + R
         try:
             K = self.P @ H.T @ np.linalg.inv(S)
         except np.linalg.LinAlgError:
             return self.get_state()
 
-        # 4. Innovation (Measurement Residual)
+        # 5. Innovation (Must use wrap_to_pi for the ERROR)
         y = z - (H @ self.x)
-        
-        # WRAPPING: Since we are dealing with angles, we need to wrap the innovation to [-pi, pi]
-        for i in range(len(y)):
-            y[i] = wrap_to_pi(y[i])
+        y[0] = wrap_to_pi(y[0])
+        y[1] = wrap_to_pi(y[1])
 
-        # 5. Update State
+        # 6. Update State
         self.x = self.x + K @ y
         
-        # Wrap final state
-        self.x[0] = wrap_to_pi(self.x[0])
-        self.x[1] = wrap_to_pi(self.x[1])
+        # 7. WRAPPING: Force state to remain strictly positive distances
+        self.x[0] = wrap_to_2pi(self.x[0])
+        self.x[1] = wrap_to_2pi(self.x[1])
 
-        # 6. Update Covariance
+        # 8. Update Covariance
         I_KH = self.I - K @ H
         self.P = I_KH @ self.P @ I_KH.T + K @ R @ K.T
-        self.P = 0.5 * (self.P + self.P.T)  # Ensure symmetry
+        self.P = 0.5 * (self.P + self.P.T) 
+
+    def get_state(self) -> dict:
+        return {
+            'd_ahead': self.x[0],
+            'd_behind': self.x[1],
+        }
 
     def _get_signed_angle(self, v1, v2):
         ''' Returns angle from v1 to v2 in 2D plane. '''
-        # Cross product (2D): x1*y2 - y1*x2
         cross = v1[0]*v2[1] - v1[1]*v2[0]
-        # Dot product
         dot   = v1[0]*v2[0] + v1[1]*v2[1]
         return np.arctan2(cross, dot)
-    
-    def get_state(self) -> dict:
-        return {
-            'pred': self.x[0],
-            'succ': self.x[1],
-        }
 
 
 class FilterSpatial(BaseFilter):

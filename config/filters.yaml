@@ -56,18 +56,19 @@ FilterRelativeII:
   Q: [0.01, 0.01, 0.01, 0.1, 0.05, 0.000001]
   V: [0.1, 0.1, 0.1]
   # Kalman filter parameters for relative filter
-  P_rel: [0.1, 0.1, 0.1]
-  Q_rel: [0.001, 0.001, 001]
-  V_rel: [0.1, 0.1, 0.1]
+  P_rel: [0.1, 0.1]      # rad, rad
+  Q_rel: [0.001, 0.001]  # rad/s, rad/s
+  V_rel: [0.01, 0.01]    # rad, rad
   # Other parameters
   predict_hz: 100.0
   update_hz: 10.0
   seed: 10
   frame_id: world
-  radius_nominal: 1.0  # meters
+  radius_nominal: 0.8  # meters
   omega_nominal: 0.2   # radians per second
   hover_height: 0.3    # meters
-  zupt_threshold: 0.01 # m/s
+  encirclement_height: 0.3 # meters
+  zupt_threshold: 0.01     # m/s
   k_phi: 0.1
 
 FilterSpatial:

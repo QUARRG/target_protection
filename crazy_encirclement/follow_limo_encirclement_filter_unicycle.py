@@ -34,12 +34,6 @@ class FollowUnicycleEncirclement(Node):
         self.declare_parameter('k_phi', 1.0)
         self.declare_parameter('frame_id', 'world')
         self.declare_parameter('target', 'LIMO')
-        
-        
-        # Staged approach parameters
-        self.declare_parameter('approach_tolerance', 0.15)
-        self.declare_parameter('min_neighbor_distance', 0.4)
-        self.declare_parameter('staging_gain', 0.5)
 
         self.robot          = str(self.get_parameter('robot').value)
         self.hover_height   = float(self.get_parameter('hover_height').value)
@@ -48,26 +42,22 @@ class FollowUnicycleEncirclement(Node):
         self.n_agents       = int(self.get_parameter('number_of_agents').value)
         self.k_phi          = float(self.get_parameter('k_phi').value)
         self.frame_id       = str(self.get_parameter('frame_id').value)
-        self.target      = str(self.get_parameter('target').value)
-        
-        # Get staged approach parameters
-        self.approach_tolerance     = float(self.get_parameter('approach_tolerance').value)
-        self.min_neighbor_distance  = float(self.get_parameter('min_neighbor_distance').value)
-        self.staging_gain           = float(self.get_parameter('staging_gain').value)
+        self.target         = 'LIMO'   #str(self.get_parameter('target').value)
 
         # Filters parameters
         self.declare_parameter('P', [1.0, 1.0, 0.15, 0.5, 0.2])
         self.declare_parameter('Q', [0.1, 0.1, 0.01, 0.05, 0.1])
         self.declare_parameter('V', [0.1, 0.1, 0.1])
 
-        self.declare_parameter('P_rel', [0.1, 0.1, 0.1])
-        self.declare_parameter('Q_rel', [0.01, 0.01, 0.01])
-        self.declare_parameter('V_rel', [0.1, 0.1, 0.1])
+        self.declare_parameter('P_rel', [0.1, 0.1])
+        self.declare_parameter('Q_rel', [0.01, 0.01])
+        self.declare_parameter('V_rel', [0.1, 0.1])
 
         self.declare_parameter('predict_hz', 100.0)
         self.declare_parameter('update_hz', 10.0)
         self.declare_parameter('seed', 42)        
         self.declare_parameter('zupt_threshold', 0.05)
+        self.declare_parameter('encirclement_height', 0.3)
         
         # Get filter parameters
         self.P_list = self.get_parameter('P').value
@@ -78,9 +68,10 @@ class FollowUnicycleEncirclement(Node):
         self.Q_rel_list = self.get_parameter('Q_rel').value
         self.V_rel_list = self.get_parameter('V_rel').value
 
-        self.predict_hz = self.get_parameter('predict_hz').value
-        self.update_hz  = self.get_parameter('update_hz').value
-        self.zupt_threshold = self.get_parameter('zupt_threshold').value
+        self.predict_hz          = self.get_parameter('predict_hz').value
+        self.update_hz           = self.get_parameter('update_hz').value
+        self.zupt_threshold      = self.get_parameter('zupt_threshold').value
+        self.encirclement_height = self.get_parameter('encirclement_height').value
 
         # Set random seed
         seed = self.get_parameter('seed').value
@@ -183,7 +174,7 @@ class FollowUnicycleEncirclement(Node):
             rclpy.spin_once(self, timeout_sec=0.1)
 
         # Initializing filter Unicycle
-        initialization_noise = np.zeros(6)  # np.random.multivariate_normal(np.zeros(len(self.P_list)), np.diag(np.square(self.P_list)))
+        initialization_noise = np.random.multivariate_normal(np.zeros(len(self.P_list)), np.diag(np.square(self.P_list)))
 
         # Initial states - transform from drone body frame to global frame
         # LIMO_pose is in drone's body frame, need to transform to initial/global frame
@@ -215,35 +206,56 @@ class FollowUnicycleEncirclement(Node):
         }
         self.filter_unicycle = FilterUnicycle(self.robot, self.filter_unicycle_params, self)
 
-        # Initializing filter relative
+        # Initializing filter Relative
         self.FOLLOWER_pose = None
         self.LEADER_pose   = None
-        while (self.FOLLOWER_pose is None and self.LEADER_pose is None):
+        while (self.FOLLOWER_pose is None or self.LEADER_pose is None):
             rclpy.spin_once(self, timeout_sec=0.1)
 
-        initialization_noise_rel = np.random.multivariate_normal(np.zeros(len(self.P_rel_list)), np.diag(np.square(self.P_rel_list)))
+        # Extract X, Y Positions (Not Orientations)
+        limo_x = self.LIMO_pose.pose.position.x
+        limo_y = self.LIMO_pose.pose.position.y
+        
+        leader_x = self.LEADER_pose.pose.position.x
+        leader_y = self.LEADER_pose.pose.position.y
+        
+        follower_x = self.FOLLOWER_pose.pose.position.x
+        follower_y = self.FOLLOWER_pose.pose.position.y
+        
+        # Ego drone's initial position
+        ego_x = self.T_init[0, 3] 
+        ego_y = self.T_init[1, 3]
 
-        rotation_leader = R.from_quat([self.LEADER_pose.pose.orientation.x, self.LEADER_pose.pose.orientation.y,
-                                       self.LEADER_pose.pose.orientation.z, self.LEADER_pose.pose.orientation.w])
-        heading_leader_init = rotation_leader.as_euler('zyx')[0]
+        # Calculate True Geometric Phases [-pi, pi]
+        phase_leader   = np.arctan2(leader_y - limo_y, leader_x - limo_x)
+        phase_follower = np.arctan2(follower_y - limo_y, follower_x - limo_x)
+        phase_ego      = np.arctan2(ego_y - limo_y, ego_x - limo_x)
 
-        rotation_follower = R.from_quat([self.FOLLOWER_pose.pose.orientation.x, self.FOLLOWER_pose.pose.orientation.y,
-                                         self.FOLLOWER_pose.pose.orientation.z, self.FOLLOWER_pose.pose.orientation.w])
-        heading_follower_init = rotation_follower.as_euler('zyx')[0]
+        # Generate Initialization Noise
+        initialization_noise_rel = np.random.multivariate_normal(
+            np.zeros(len(self.P_rel_list)), 
+            np.diag(np.square(self.P_rel_list))
+        )
 
-        heading_ego_init = rotation.as_euler('zyx')[0]
+        # 5. Calculate Strictly Positive Initial Distances [0, 2pi)
+        # d_ahead: Angle from Ego to Leader
+        d_ahead_init = (phase_leader - phase_ego) + initialization_noise_rel[0]
+        d_ahead_init = wrap_to_2pi(d_ahead_init)
 
-        delta_phi_succ_init = wrap_to_pi((heading_leader_init - heading_ego_init) + initialization_noise_rel[0])
-        delta_phi_pred_init = wrap_to_pi((heading_ego_init - heading_follower_init) + initialization_noise_rel[1])
+        # d_behind: Angle from Follower to Ego
+        d_behind_init = (phase_ego - phase_follower) + initialization_noise_rel[1]
+        d_behind_init = wrap_to_2pi(d_behind_init)
 
+        # 6. Build Parameter Dictionary
         self.filter_relative_params = {
-            'P': self.P_rel_list,
-            'Q': self.Q_rel_list,
-            'V': self.V_rel_list,
-            'delta_phi_pred_guess': delta_phi_pred_init,
-            'delta_phi_succ_guess': delta_phi_succ_init
+            'P_rel': self.P_rel_list,
+            'Q_rel': self.Q_rel_list,
+            'V_rel': self.V_rel_list,
+            'x_guess': [d_ahead_init, d_behind_init] 
         }
+        
         self.filter_relative = FilterRelativeII(self.robot, self.filter_relative_params, self)
+        self.info(f"FilterRelative initialized. d_ahead: {d_ahead_init:.2f}, d_behind: {d_behind_init:.2f}")
         
         # Crazyflie position command publisher
         self.position_pub = self.create_publisher(Position, f'/{self.robot}/cmd_position', 10)
@@ -260,6 +272,7 @@ class FollowUnicycleEncirclement(Node):
         self.info('Follow unicycle encirclement node has been started.')
         # Timer of the main loop
         self.timer = self.create_timer(self.timer_period, self.timer_callback)
+
     def timer_callback(self):
         ''' Timer callback to send position commands to the crazyflie based on the current state. '''
         try:
@@ -281,21 +294,20 @@ class FollowUnicycleEncirclement(Node):
                 center_pos = np.array(limo_state['position']) 
                 center_z   = limo_state['z_ground']
                 d_phis = self.filter_relative.predict(self.timer_period)
-
-                # 2. Get Phase Errors (Filter 2)
-                # These are the angular gaps to your neighbors
-                # d_phis = self.filter_relative.get_state()
-                d_phi_pred, d_phi_succ = d_phis['pred'], d_phis['succ']
                 
                 # --- B. CONTROL ---
-                # 3. Compute Correction Gain
-                # Goal: Make gaps equal (sum of signed errors = 0)
-                # phase_error = (d_phi_pred + d_phi_succ)
-                phase_error = 1/(d_phi_pred + 1e-6) + 1/(d_phi_succ + 1e-6)
+                # 2. Get Phase Errors (Filter 2)
+                d_phis = self.filter_relative.predict(self.timer_period)
+                d_ahead  = d_phis['d_ahead']  # Distance to Leader
+                d_behind = d_phis['d_behind'] # Distance to Follower
+                
+                # Follower pushes you (+), Leader blocks you (-)
+                phase_error = (1.0 / (d_behind + 1e-6)) - (1.0 / (d_ahead + 1e-6))
+                max_correction = self.omega_nominal * 1.5 
+                u_correction = np.clip(u_correction, -max_correction, max_correction)
                 u_correction = self.k_phi * phase_error
 
-                # 4. INTEGRATE Virtual Phase (The "Motion" Step)
-                # Initialize alpha if first run
+                # 4. INTEGRATE Virtual Phase
                 if self.alpha is None:
                     # Start at current angle relative to car
                     curr_pos = self.T_curr[0:2, 3] 
@@ -303,25 +315,22 @@ class FollowUnicycleEncirclement(Node):
                                             curr_pos[0] - center_pos[0])
 
                 # Update the angle: Nominal Orbit + Feedback Correction
-                # This replaces the "Rc @ exp(omega)" logic from the old filter
                 rotation_speed = self.omega_nominal + u_correction
                 self.alpha += rotation_speed * self.timer_period
-
-                # Wrap to [0, 2*pi]
                 self.alpha = wrap_to_2pi(self.alpha)
 
                 # Publishing omega
                 omega_d = Float32()
                 omega_d.data = rotation_speed
                 self.omega_pub.publish(omega_d)
-                self.info(f'angular velocity {rotation_speed}')
+                # self.info(f'angular velocity {rotation_speed}')
 
                 # --- C. TRAJECTORY GENERATION ---
                 # 5. Polar -> Cartesian (Global Frame)
                 # This generates the moving setpoint on the circle
                 x_des = center_pos[0] + self.radius_nominal * np.cos(self.alpha)
                 y_des = center_pos[1] + self.radius_nominal * np.sin(self.alpha)
-                z_des = center_z      + self.hover_height
+                z_des = center_z      + self.encirclement_height
                 p_des = np.array([x_des, y_des, z_des])
 
                 # Desired position in the Vicon frame
@@ -343,51 +352,62 @@ class FollowUnicycleEncirclement(Node):
         except KeyboardInterrupt:
             self.info('Exiting open loop command node')
 
-    def _update_callback(self, msg: NamedPoseArray):
+    def _update_callback(self, msg):
         ''' Callback to update the filter with new GPS measurements. '''
         # Extract measurement for the robot
         for pose in msg.poses:
             if self.target in pose.name:
-                # Relative pose of LIMO in the current robot frame
                 self.LIMO_pose = pose
-            if pose.name == self.follower:
-                # Relative pose of the follower in the current robot frame
+            elif pose.name == self.follower:
                 self.FOLLOWER_pose = pose
-            if pose.name == self.leader:
-                # Relative pose of the leader in the current robot frame
+            elif pose.name == self.leader:
                 self.LEADER_pose = pose
 
         # Getting measurements
         if self.LIMO_pose is not None and \
-            self.FOLLOWER_pose is not None and \
-            self.LEADER_pose is not None:
+           self.FOLLOWER_pose is not None and \
+           self.LEADER_pose is not None:
 
+            # 1. Noise Injection
+            # Limo
             measurement_limo_noise = np.random.multivariate_normal(np.zeros(3), np.diag(np.square(self.V_list[0:3])))
             measurement_limo = np.array([self.LIMO_pose.pose.position.x, self.LIMO_pose.pose.position.y, self.LIMO_pose.pose.position.z])
             measurement_limo += measurement_limo_noise
             
-            measurement_pred_noise = np.random.multivariate_normal(np.zeros(3), np.diag(np.square(self.V_rel_list)))
-            measurement_pred = np.array([self.FOLLOWER_pose.pose.position.x, self.FOLLOWER_pose.pose.position.y, self.FOLLOWER_pose.pose.position.z])
-            measurement_pred += measurement_pred_noise
+            # Follower
+            measurement_follower_noise = np.random.multivariate_normal(np.zeros(3), np.diag(np.square([0.1, 0.1, 0.1])))
+            measurement_follower = np.array([self.FOLLOWER_pose.pose.position.x, self.FOLLOWER_pose.pose.position.y, self.FOLLOWER_pose.pose.position.z])
+            measurement_follower += measurement_follower_noise
             
-            measurement_succ_noise = np.random.multivariate_normal(np.zeros(3), np.diag(np.square(self.V_rel_list)))
-            measurement_succ = np.array([self.LEADER_pose.pose.position.x, self.LEADER_pose.pose.position.y, self.LEADER_pose.pose.position.z])
-            measurement_succ += measurement_succ_noise
+            # Leader
+            measurement_leader_noise = np.random.multivariate_normal(np.zeros(3), np.diag(np.square([0.1, 0.1, 0.1])))
+            measurement_leader = np.array([self.LEADER_pose.pose.position.x, self.LEADER_pose.pose.position.y, self.LEADER_pose.pose.position.z])
+            measurement_leader += measurement_leader_noise
 
-            # Updating filters
-            if self.state == 1:
-                # Current pose in the initial frame
+            # 2. Updating filters
+            # Run filters in both Hover (1) and Encircle (2) states
+            if self.state in [1, 2]:
+                
+                # Current pose in the initial frame (Compute Once)
                 T_curr_robot = np.linalg.inv(self.T_init) @ self.T_curr
-                self.filter_relative.update(measurement_limo, measurement_pred, measurement_succ, T_curr_robot[0:3, 0:3], T_curr_robot[0:3, 3])
+                R_drone = T_curr_robot[0:3, 0:3]
+                p_drone = T_curr_robot[0:3, 3]
 
-            elif self.state == 1 or self.state == 2:
-                # Current pose in the initial frame
-                T_curr_robot = np.linalg.inv(self.T_init) @ self.T_curr
-                self.filter_unicycle.update(measurement_limo, T_curr_robot[0:3, 0:3], T_curr_robot[0:3, 3])
+                # Update Unicycle Filter
+                self.filter_unicycle.update(
+                    measurement_limo, 
+                    R_drone, 
+                    p_drone
+                )
 
-                # Current pose in the initial frame
-                T_curr_robot = np.linalg.inv(self.T_init) @ self.T_curr
-                self.filter_relative.update(measurement_limo, measurement_pred, measurement_succ, T_curr_robot[0:3, 0:3], T_curr_robot[0:3, 3])             
+                # Update Relative Phase Filter 
+                # Order strictly matches: (limo, leader, follower, R)
+                self.filter_relative.update(
+                    measurement_limo, 
+                    measurement_leader, 
+                    measurement_follower, 
+                    R_drone
+                )             
 
     def _poses_changed(self, msg):
         """ Topic update callback to the motion capture lib's
@@ -550,34 +570,6 @@ class FollowUnicycleEncirclement(Node):
         T_des = self.T_init @ T_set_point
         r_des = T_des[0:3, 3] 
         return r_des
-    
-    def _check_approach_complete(self, center_pos: np.ndarray, dist_to_limo: float) -> bool:
-        ''' Check if approach phase is complete and ready for full encirclement. '''
-        # Condition 1: Distance to limo center within tolerance
-        radius_error = abs(dist_to_limo - self.radius_nominal)
-        at_nominal_radius = radius_error < self.approach_tolerance
-        
-        # Condition 2 & 3: Check distances to neighbors
-        safe_from_neighbors = True
-        
-        if self.FOLLOWER_pose is not None and self.LEADER_pose is not None:
-            # Distance to follower in current frame
-            follower_dist = np.linalg.norm([
-                self.FOLLOWER_pose.pose.position.x,
-                self.FOLLOWER_pose.pose.position.y
-            ])
-            
-            # Distance to leader in current frame
-            leader_dist = np.linalg.norm([
-                self.LEADER_pose.pose.position.x,
-                self.LEADER_pose.pose.position.y
-            ])
-            
-            # Both neighbors must be at safe distance
-            safe_from_neighbors = (follower_dist > self.min_neighbor_distance and 
-                                   leader_dist > self.min_neighbor_distance)
-        
-        return at_nominal_radius and safe_from_neighbors
 
 
 def main():
