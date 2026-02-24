@@ -27,7 +27,7 @@ class Evader(Node):
         self.declare_parameter('hover_height', 0.3)
         self.declare_parameter('frame_id', 'world')
         self.declare_parameter('target', 'LIMO')
-        self.declare_parameter('trajectory','back_forth')
+        self.declare_parameter('trajectory','eight')
 
         self.robot    = str(self.get_parameter('robot').value)
         self.hover_height = float(self.get_parameter('hover_height').value)
@@ -47,15 +47,16 @@ class Evader(Node):
             dt = 0.01    # time step
 
             # Time vector
-            self.t = np.arange(0, t_end, self.timer_period)
+            self.t = np.arange(0, t_end, self.timer_period/3)
             self.x = A*np.cos(w*self.t)
             self.y = A*np.sin(w*self.t)*np.cos(w*self.t)
             self.index = 0
         elif self.trajectory == 'back_forth':
-            self.x = np.arange(-1, 1, 0.02)
+            self.x = np.arange(-1, 1, 0.01)
             self.y = np.zeros_like(self.x)
             self.index = 0
             self.increment = 1
+        
 
         self.initial_pose = np.zeros(3)
         self.order = []

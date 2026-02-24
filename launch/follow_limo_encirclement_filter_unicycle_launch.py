@@ -100,7 +100,7 @@ def parse_yaml(context):
         filter_yaml_content = yaml.safe_load(ymlfile)
 
     robots_list = []
-    evader = 'LIMO'
+    evader = None #'LIMO'
     # Listing all enabled robots
     for robot in crazyflies['robots']:
         if crazyflies['robots'][robot]['enabled']:
@@ -154,7 +154,7 @@ def parse_yaml(context):
             executable='evader',
             name=evader+'_evader',
             output='screen',
-            parameters=[{'evader': evader}]
+            parameters=[{'evader': evader} | filter_yaml_content.get('FilterRelativeII', {})]
         ))
         
     # Agents order node

@@ -483,44 +483,29 @@ class FilterUnicycle:
     def predict(self, dt: float) -> dict:
         ''' Propagates the state and covariance forward in time. '''
 
-        # # --- ZUPT LOGIC START ---
-        # is_stopped = abs(self.linear_speed) < self.zupt_threshold
+        # --- ZUPT (Zero Velocity Update) Logic ---
+        # When the unicycle is stationary, position doesn't drift but heading is unobservable
+        is_stopped = abs(self.linear_speed) < self.zupt_threshold
 
-        # if is_stopped:
-        #     # --- 1. STATE CLAMPING ---
-        #     # STOP the linear drift. 
-        #     # If we don't do this, position = position + v * dt will drift forever.
-        #     self.linear_speed = 0.0 
+        current_Q = self.Q.copy()
+
+        if is_stopped:
+            # Clamp velocity to exactly zero to prevent drift
+            self.linear_speed = 0.0
             
-        #     # DO NOT clamp angular_speed. 
-        #     # The robot might be turning, we just can't see it.
-        #     # self.angular_speed = ... (Leave as is)
-
-        #     # --- 2. COVARIANCE MANIPULATION ---
-        #     current_Q = np.zeros_like(self.Q)
+            # Reduce position noise (not moving, so less drift)
+            current_Q[0, 0] *= 0.01  # x position
+            current_Q[1, 1] *= 0.01  # y position
             
-        #     # A. FREEZE Position & Ground (We know it's not translating)
-        #     # 1e-6 allows tiny adjustments for VIO drift, but stops jumpiness.
-        #     current_Q[0,0] = 1e-2
-        #     current_Q[1,1] = 1e-2 
-        #     current_Q[5,5] = 1e-2 
-
-        #     # B. WAKE UP Velocity
-        #     # We forced v=0 above, but we keep noise non-zero so the filter 
-        #     # stays "awake" to detect when the car accelerates again.
-        #     current_Q[4,4] = 1e-2 
-
-        #     # C. INFLATE Heading & Omega
-        #     # We admit we don't know the heading because we can't observe rotation.
-        #     # This makes P_theta grow large, so when we move again, it snaps quickly.
-        #     current_Q[2,2] = 1.0 
-        #     current_Q[3,3] = 1.0 
+            # Keep heading and angular velocity noise active
+            # (the vehicle might be rotating in place, and heading is unobservable when v=0)
+            # We don't change Q[2,2] (theta) or Q[3,3] (omega)
             
-        # else:
-        #     current_Q = self.Q
-        # # --- ZUPT LOGIC END ---
-
-        current_Q = self.Q
+            # Keep velocity noise small but non-zero to allow recovery
+            current_Q[4, 4] *= 0.1  # linear speed
+            
+            # Ground plane stays steady
+            current_Q[5, 5] *= 0.01  # z_ground
         
         # 1. State Propagation
         # Rotation: R_next = R * Exp(omega * dt)
@@ -670,6 +655,9 @@ class FilterUnicycle:
         # --- Parameter Update (Additive) ---
         self.angular_speed += xi_omega
         self.linear_speed  += xi_v
+        # Constrain linear speed to be non-negative (unicycle can only move forward)
+        # This prevents velocity flipping when the vehicle is stationary
+        self.linear_speed = max(0.0, self.linear_speed)
         self.z_ground      += xi_z
 
         # 7. Covariance Update (Josephson Form)

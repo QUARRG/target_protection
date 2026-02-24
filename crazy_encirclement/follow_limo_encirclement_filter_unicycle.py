@@ -49,8 +49,9 @@ class FollowUnicycleEncirclement(Node):
         self.target         = str(self.get_parameter('target').value)
 
         # Filters parameters
-        self.declare_parameter('P', [1.0, 1.0, 0.15, 0.5, 0.2])
-        self.declare_parameter('Q', [0.1, 0.1, 0.01, 0.05, 0.1])
+        # State: [x, y, theta, omega, v, z_ground] - 6D state
+        self.declare_parameter('P', [1.0, 1.0, 0.15, 0.5, 0.2, 0.1])
+        self.declare_parameter('Q', [0.1, 0.1, 0.01, 0.05, 0.1, 0.01])
         self.declare_parameter('V', [0.1, 0.1, 0.1])
 
         self.declare_parameter('P_rel', [0.1, 0.1])
@@ -191,10 +192,13 @@ class FollowUnicycleEncirclement(Node):
                                 self.LIMO_pose.pose.orientation.z, self.LIMO_pose.pose.orientation.w])
         heading_body = rotation.as_euler('zyx')[0]
         drone_heading = np.arctan2(self.T_init[1, 0], self.T_init[0, 0])
-        heading_init = wrap_to_pi(drone_heading + heading_body + initialization_noise[2])
+        safe_heading_noise = np.clip(initialization_noise[2], -np.pi/4, np.pi/4)
+        heading_init = wrap_to_pi(drone_heading + heading_body + safe_heading_noise)
         
         angular_speed_init = 0.0 + initialization_noise[3]
-        linear_speed_init  = 0.0 + initialization_noise[4]
+        # Initialize velocity to zero (vehicle starts at rest)
+        # Adding noise would bias the estimate since abs() creates positive bias
+        linear_speed_init  = 0.0
         z_ground_init      = self.LIMO_pose.pose.position.z + initialization_noise[5]
 
         self.filter_unicycle_params = {
@@ -205,7 +209,8 @@ class FollowUnicycleEncirclement(Node):
             'heading_guess': heading_init,
             'angular_speed_guess': angular_speed_init,
             'linear_speed_guess': linear_speed_init,
-            'z_ground_guess': z_ground_init
+            'z_ground_guess': z_ground_init,
+            'zupt_threshold': self.zupt_threshold
         }
         self.filter_unicycle = FilterUnicycle(self.robot, self.filter_unicycle_params, self)
 
@@ -264,6 +269,7 @@ class FollowUnicycleEncirclement(Node):
         # Crazyflie position command publisher
         self.position_pub = self.create_publisher(Position, f'/{self.robot}/cmd_position', 10)
         self.omega_pub = self.create_publisher(Float32, f'/{self.robot}/omega_d', 10)
+        self.radius_pub = self.create_publisher(Float32, f'/{self.robot}/filtered/radius', 10)
         
         # Arming all drones
         self.arm_client = self.create_client(Arm, self.robot + '/arm')
@@ -307,7 +313,7 @@ class FollowUnicycleEncirclement(Node):
                 d_behind = d_phis['d_behind'] # Distance to Follower
 
                 # Computing adaptative omega nominal
-                self.omega = limo_state['linear_speed'] / self.r
+                self.omega = (limo_state['linear_speed'] / self.r) * 2.0
                 
                 # Follower pushes you (+), Leader blocks you (-)
                 phase_error = (1.0 / (d_behind + 1e-6)) - (1.0 / (d_ahead + 1e-6))
@@ -325,8 +331,9 @@ class FollowUnicycleEncirclement(Node):
                 # Update the angle: Nominal Orbit + Feedback Correction
                 rotation_speed = self.omega + u_correction
                 self.alpha += rotation_speed * self.timer_period
+                self.alpha = wrap_to_pi(self.alpha)
 
-                # Publishing omega
+                # Publishing omega (full rotation speed for monitoring)
                 omega_d = Float32()
                 omega_d.data = rotation_speed
                 self.omega_pub.publish(omega_d)
@@ -347,14 +354,15 @@ class FollowUnicycleEncirclement(Node):
                     v = np.array([0.0, 0.0])
                 else:
                     v  = np.array([limo_state['linear_speed'] * np.cos(limo_state['heading']),
-                                limo_state['linear_speed'] * np.sin(limo_state['heading'])])
+                                   limo_state['linear_speed'] * np.sin(limo_state['heading'])])
                 nominator = np.dot(p, v)
                 denominator = np.linalg.norm(p) * np.linalg.norm(v) + 1e-6
                 r_correction = self.k_r * dr * nominator / denominator
                 self.r = self.radius_nominal + np.clip(r_correction, 0.0, self.radius_nominal * 2.0)
+                self.radius_pub.publish(Float32(data=self.r))
 
                 # Desired position in the Vicon frame
-                self.alpha = wrap_to_2pi(self.alpha)
+                # self.alpha = wrap_to_2pi(self.alpha)
                 r_des = self._get_desired_position(p_des)   
                 self.send_position(r_des)
 
@@ -396,12 +404,12 @@ class FollowUnicycleEncirclement(Node):
             measurement_limo += measurement_limo_noise
             
             # Follower
-            measurement_follower_noise = np.random.multivariate_normal(np.zeros(3), np.diag(np.square([0.1, 0.1, 0.1])))
+            measurement_follower_noise = np.random.multivariate_normal(np.zeros(3), np.diag(np.square([0.01, 0.01, 0.01])))
             measurement_follower = np.array([self.FOLLOWER_pose.pose.position.x, self.FOLLOWER_pose.pose.position.y, self.FOLLOWER_pose.pose.position.z])
             measurement_follower += measurement_follower_noise
             
             # Leader
-            measurement_leader_noise = np.random.multivariate_normal(np.zeros(3), np.diag(np.square([0.1, 0.1, 0.1])))
+            measurement_leader_noise = np.random.multivariate_normal(np.zeros(3), np.diag(np.square([0.01, 0.01, 0.01])))
             measurement_leader = np.array([self.LEADER_pose.pose.position.x, self.LEADER_pose.pose.position.y, self.LEADER_pose.pose.position.z])
             measurement_leader += measurement_leader_noise
 
