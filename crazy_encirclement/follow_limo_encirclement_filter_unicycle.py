@@ -25,61 +25,85 @@ class FollowUnicycleEncirclement(Node):
         super().__init__('follow_unicycle_encirclement')
         self.info = self.get_logger().info
 
-        # Other Parameters
+        # Parameters
         self.declare_parameter('robot', 'C20')
         self.declare_parameter('number_of_agents', 4)
-        self.declare_parameter('hover_height', 0.3)
-        self.declare_parameter('radius_nominal', 0.5)
-        self.declare_parameter('omega_nominal', 0.5)
-        self.declare_parameter('k_phi', 1.0)
-        self.declare_parameter('k_r', 1.0)
-        self.declare_parameter('frame_id', 'world')
         self.declare_parameter('target', 'LIMO')
 
-        self.robot          = str(self.get_parameter('robot').value)
-        self.hover_height   = float(self.get_parameter('hover_height').value)
-        self.radius_nominal = float(self.get_parameter('radius_nominal').value)
-        self.r              = float(self.get_parameter('radius_nominal').value)
-        self.omega_nominal  = float(self.get_parameter('omega_nominal').value)
-        self.omega          = float(self.get_parameter('omega_nominal').value)
-        self.n_agents       = int(self.get_parameter('number_of_agents').value)
-        self.k_phi          = float(self.get_parameter('k_phi').value)
-        self.k_r            = float(self.get_parameter('k_r').value)
-        self.frame_id       = str(self.get_parameter('frame_id').value)
-        self.target         = str(self.get_parameter('target').value)
+        self.robot = str(self.get_parameter('robot').value)
+        self.number_of_agents = int(self.get_parameter('number_of_agents').value)
+        self.target = str(self.get_parameter('target').value)
 
-        # Filters parameters
-        # State: [x, y, theta, omega, v, z_ground] - 6D state
-        self.declare_parameter('P', [1.0, 1.0, 0.15, 0.5, 0.2, 0.1])
-        self.declare_parameter('Q', [0.1, 0.1, 0.01, 0.05, 0.1, 0.01])
-        self.declare_parameter('V', [0.1, 0.1, 0.1])
-
-        self.declare_parameter('P_rel', [0.1, 0.1])
-        self.declare_parameter('Q_rel', [0.01, 0.01])
-        self.declare_parameter('V_rel', [0.1, 0.1])
-
-        self.declare_parameter('predict_hz', 100.0)
-        self.declare_parameter('update_hz', 10.0)
-        self.declare_parameter('seed', 42)        
-        self.declare_parameter('zupt_threshold', 0.05)
-        self.declare_parameter('encirclement_height', 0.3)
+        # Determine which target parameters to use based on whoisthetarget
+        self.declare_parameter('whoisthetarget', 'limo')
+        whoisthetarget = str(self.get_parameter('whoisthetarget').value)
         
-        # Get filter parameters
-        self.P_list = self.get_parameter('P').value
-        self.Q_list = self.get_parameter('Q').value
-        self.V_list = self.get_parameter('V').value
+        # Select target prefix based on target type
+        if whoisthetarget == 'limo':
+            target_prefix = 'target_limo'
+        else:
+            target_prefix = 'target_drone'
+        self.info(f"Selected target for filter parameters: {whoisthetarget} (prefix: {target_prefix})")
 
-        self.P_rel_list = self.get_parameter('P_rel').value
-        self.Q_rel_list = self.get_parameter('Q_rel').value
-        self.V_rel_list = self.get_parameter('V_rel').value
+        # Filter parameters for target (nested under target_limo or target_drone)
+        self.declare_parameter(f'{target_prefix}.P', [1.0, 1.0, 0.15, 0.5, 0.2, 0.1])
+        self.declare_parameter(f'{target_prefix}.Q', [0.1, 0.1, 0.01, 0.05, 0.1, 0.01])
+        self.declare_parameter(f'{target_prefix}.V', [0.1, 0.1, 0.1])
+    
+        # Filter parameters for relative (nested under relative)
+        self.declare_parameter('relative.P_rel', [0.1, 0.1])
+        self.declare_parameter('relative.Q_rel', [0.01, 0.01])
+        self.declare_parameter('relative.V_rel', [0.1, 0.1])
+        self.declare_parameter('relative.Noise_relative', [0.02, 0.02, 0.02])
 
-        self.predict_hz          = self.get_parameter('predict_hz').value
-        self.update_hz           = self.get_parameter('update_hz').value
-        self.zupt_threshold      = self.get_parameter('zupt_threshold').value
-        self.encirclement_height = self.get_parameter('encirclement_height').value
+        # Control parameters (nested under controls)
+        self.declare_parameter('controls.hover_height', 0.3)
+        self.declare_parameter('controls.radius_nominal', 0.5)
+        self.declare_parameter('controls.omega_nominal', 0.5)
+        self.declare_parameter('controls.encirclement_height', 0.3)
+        self.declare_parameter('controls.zupt_threshold', 0.05)
+        self.declare_parameter('controls.k_phi', 1.0)
+        self.declare_parameter('controls.k_r', 1.0)
+        self.declare_parameter('controls.k_omega', 2.0)
+
+        # Other parameters (nested under others)
+        self.declare_parameter('others.frame_id', 'world')
+        self.declare_parameter('others.seed', 42)
+        self.declare_parameter('others.predict_hz', 100.0)
+        self.declare_parameter('others.update_hz', 10.0)
+        
+        # Get control parameters (nested)
+        self.hover_height   = float(self.get_parameter('controls.hover_height').value)
+        self.radius_nominal = float(self.get_parameter('controls.radius_nominal').value)
+        self.r              = float(self.get_parameter('controls.radius_nominal').value)
+        self.omega_nominal  = float(self.get_parameter('controls.omega_nominal').value)
+        self.omega          = float(self.get_parameter('controls.omega_nominal').value)
+        self.n_agents       = int(self.get_parameter('number_of_agents').value)
+        self.k_phi          = float(self.get_parameter('controls.k_phi').value)
+        self.k_r            = float(self.get_parameter('controls.k_r').value)
+        self.k_omega        = float(self.get_parameter('controls.k_omega').value)
+        self.frame_id       = str(self.get_parameter('others.frame_id').value)
+        self.whoisthetarget = str(self.get_parameter('whoisthetarget').value)
+        
+        # Get filter parameters for target (using selected prefix)
+        self.P_list = self.get_parameter(f'{target_prefix}.P').value
+        self.Q_list = self.get_parameter(f'{target_prefix}.Q').value
+        self.V_list = self.get_parameter(f'{target_prefix}.V').value
+
+        # Get filter parameters for relative
+        self.P_rel_list = self.get_parameter('relative.P_rel').value
+        self.Q_rel_list = self.get_parameter('relative.Q_rel').value
+        self.V_rel_list = self.get_parameter('relative.V_rel').value
+        self.Noise_relative_list = self.get_parameter('relative.Noise_relative').value
+
+        # Get other parameters
+        self.predict_hz          = self.get_parameter('others.predict_hz').value
+        self.update_hz           = self.get_parameter('others.update_hz').value
+        self.zupt_threshold      = self.get_parameter('controls.zupt_threshold').value
+        self.encirclement_height = self.get_parameter('controls.encirclement_height').value
 
         # Set random seed
-        seed = self.get_parameter('seed').value
+        seed = self.get_parameter('others.seed').value
         np.random.seed(seed)
 
         # Reboot client
@@ -195,7 +219,7 @@ class FollowUnicycleEncirclement(Node):
         safe_heading_noise = np.clip(initialization_noise[2], -np.pi/4, np.pi/4)
         heading_init = wrap_to_pi(drone_heading + heading_body + safe_heading_noise)
         
-        angular_speed_init = 0.0 + initialization_noise[3]
+        angular_speed_init = 0.0 # + initialization_noise[3]
         # Initialize velocity to zero (vehicle starts at rest)
         # Adding noise would bias the estimate since abs() creates positive bias
         linear_speed_init  = 0.0
@@ -206,13 +230,13 @@ class FollowUnicycleEncirclement(Node):
             'Q': self.Q_list,
             'V': self.V_list,
             'position_guess': [x_init, y_init],
-            'heading_guess': heading_init,
+            'heading_guess':  heading_init,
             'angular_speed_guess': angular_speed_init,
-            'linear_speed_guess': linear_speed_init,
+            'linear_speed_guess':  linear_speed_init,
             'z_ground_guess': z_ground_init,
             'zupt_threshold': self.zupt_threshold
         }
-        self.filter_unicycle = FilterUnicycle(self.robot, self.filter_unicycle_params, self)
+        self.filter_unicycle = FilterUnicycle(self.robot, self.filter_unicycle_params, self, self.T_init)
 
         # Initializing filter Relative
         self.FOLLOWER_pose = None
@@ -268,8 +292,9 @@ class FollowUnicycleEncirclement(Node):
         
         # Crazyflie position command publisher
         self.position_pub = self.create_publisher(Position, f'/{self.robot}/cmd_position', 10)
-        self.omega_pub = self.create_publisher(Float32, f'/{self.robot}/omega_d', 10)
-        self.radius_pub = self.create_publisher(Float32, f'/{self.robot}/filtered/radius', 10)
+        self.omega_pub  = self.create_publisher(Float32, f'/{self.robot}/relative/filtered/omega', 10)
+        self.radius_pub = self.create_publisher(Float32, f'/{self.robot}/relative/filtered/radius', 10)
+        self.radius_correction_pub = self.create_publisher(Float32, f'/{self.robot}/relative/filtered/radius_correction', 10)
         
         # Arming all drones
         self.arm_client = self.create_client(Arm, self.robot + '/arm')
@@ -313,7 +338,7 @@ class FollowUnicycleEncirclement(Node):
                 d_behind = d_phis['d_behind'] # Distance to Follower
 
                 # Computing adaptative omega nominal
-                self.omega = (limo_state['linear_speed'] / self.r) * 2.0
+                self.omega = (limo_state['linear_speed'] / self.r) * self.k_omega
                 
                 # Follower pushes you (+), Leader blocks you (-)
                 phase_error = (1.0 / (d_behind + 1e-6)) - (1.0 / (d_ahead + 1e-6))
@@ -360,6 +385,7 @@ class FollowUnicycleEncirclement(Node):
                 r_correction = self.k_r * dr * nominator / denominator
                 self.r = self.radius_nominal + np.clip(r_correction, 0.0, self.radius_nominal * 2.0)
                 self.radius_pub.publish(Float32(data=self.r))
+                self.radius_correction_pub.publish(Float32(data=r_correction))
 
                 # Desired position in the Vicon frame
                 # self.alpha = wrap_to_2pi(self.alpha)
@@ -404,12 +430,12 @@ class FollowUnicycleEncirclement(Node):
             measurement_limo += measurement_limo_noise
             
             # Follower
-            measurement_follower_noise = np.random.multivariate_normal(np.zeros(3), np.diag(np.square([0.01, 0.01, 0.01])))
+            measurement_follower_noise = np.random.multivariate_normal(np.zeros(3), np.diag(np.square(self.Noise_relative_list)))
             measurement_follower = np.array([self.FOLLOWER_pose.pose.position.x, self.FOLLOWER_pose.pose.position.y, self.FOLLOWER_pose.pose.position.z])
             measurement_follower += measurement_follower_noise
             
             # Leader
-            measurement_leader_noise = np.random.multivariate_normal(np.zeros(3), np.diag(np.square([0.01, 0.01, 0.01])))
+            measurement_leader_noise = np.random.multivariate_normal(np.zeros(3), np.diag(np.square(self.Noise_relative_list)))
             measurement_leader = np.array([self.LEADER_pose.pose.position.x, self.LEADER_pose.pose.position.y, self.LEADER_pose.pose.position.z])
             measurement_leader += measurement_leader_noise
 

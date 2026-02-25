@@ -100,7 +100,7 @@ def parse_yaml(context):
         filter_yaml_content = yaml.safe_load(ymlfile)
 
     robots_list = []
-    evader = None #'LIMO'
+    evader = 'LIMO'
     # Listing all enabled robots
     for robot in crazyflies['robots']:
         if crazyflies['robots'][robot]['enabled']:
@@ -118,7 +118,7 @@ def parse_yaml(context):
             executable='follow_limo_encirclement_filter_unicycle',
             name=robot+'_follow_limo_encirclement_filter_unicycle',
             output='screen',
-            parameters=[{'robot': robot, 'number_of_agents': len(robots_list), 'target': evader} | filter_yaml_content.get('FilterRelativeII', {})]
+            parameters=[{'robot': robot, 'number_of_agents': len(robots_list), 'target': evader} | filter_yaml_content.get('FollowLimoEncirclementFilterUnicycle', {})]
         ))
 
         # GPS/Scanner II Node for each robot
@@ -154,7 +154,7 @@ def parse_yaml(context):
             executable='evader',
             name=evader+'_evader',
             output='screen',
-            parameters=[{'evader': evader} | filter_yaml_content.get('FilterRelativeII', {})]
+            parameters=[{'evader': evader} | filter_yaml_content.get('FollowLimoEncirclementFilterUnicycle', {})]
         ))
         
     # Agents order node

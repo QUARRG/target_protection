@@ -1,6 +1,6 @@
 import numpy as np
 from icecream import ic
-def bearing_based_formation_control(agents_dist, evader_dist, k,r):
+def formation_control(agents_dist, evader_dist, k,r):
     n_agents = agents_dist.shape[1]
     u = np.zeros(3)
     for i in range(n_agents):

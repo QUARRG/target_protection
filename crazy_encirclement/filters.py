@@ -445,10 +445,11 @@ class FilterUnicycle:
     ''' LIEKF for encirclement tasks with 3D ground plane estimation.
         State: [x, y, theta, omega, v, z_ground]
     '''
-    def __init__(self, name: str, params: dict, node: Node):
+    def __init__(self, name: str, params: dict, node: Node, T_init: np.ndarray = np.eye(4)):
         self.name = name
         self.params = params
         self.node = node
+        self.T_init = T_init
 
         # Constants
         self.dim_state: int = 6  # Augmented state
@@ -476,7 +477,8 @@ class FilterUnicycle:
         self.zupt_threshold: float = float(self.params.get('zupt_threshold', 0.05))
 
         # State publisher
-        self.pub_pose: Node.Publisher = self.node.create_publisher(FilterUnicycleState, f'/{self.name}/filtered', 10)
+        self.pub_states_local: Node.Publisher  = self.node.create_publisher(FilterUnicycleState, f'/{self.name}/unicycle/filtered/local', 10)
+        self.pub_states_global: Node.Publisher = self.node.create_publisher(FilterUnicycleState, f'/{self.name}/unicycle/filtered/global', 10)
 
         self.I = np.eye(self.dim_state)
 
@@ -554,9 +556,24 @@ class FilterUnicycle:
         state_msg.linear_speed = self.linear_speed
         state_msg.angular_speed = self.angular_speed
         state_msg.covariance = self.P.flatten().tolist()
-        self.pub_pose.publish(state_msg)
+        self.pub_states_local.publish(state_msg)
         # ---------------------------------
-        
+
+        # Getting global state for publishing
+        state_msg_global = FilterUnicycleState()
+        # Rotation around z
+        R_z = np.array([[np.cos(self.theta), -np.sin(self.theta), 0],
+                        [np.sin(self.theta),  np.cos(self.theta), 0],
+                        [0, 0, 1]])
+        R_global = self.T_init[0:3, 0:3] @ R_z
+        p = np.array([self.p[0], self.p[1], self.z_ground])
+        p_global = self.T_init[0:3, 3] + R_global @ p
+        state_msg_global.x = p_global[0]
+        state_msg_global.y = p_global[1]
+        state_msg_global.z_ground = p_global[2]
+        state_msg_global.theta = self.theta
+        self.pub_states_global.publish(state_msg_global)
+
         return self.get_state()
 
     def update(self,
@@ -706,8 +723,8 @@ class FilterRelativeII:
         self.I = np.eye(2)
 
         # Rename publishers to leader/follower
-        self.pub_phase_diff_leader = self.node.create_publisher(Float32, f'/{self.name}/filtered/phase_diff/leader', 10)
-        self.pub_phase_diff_follower = self.node.create_publisher(Float32, f'/{self.name}/filtered/phase_diff/follower', 10)
+        self.pub_phase_diff_leader   = self.node.create_publisher(Float32, f'/{self.name}/relative/filtered/phase_difference/leader', 10)
+        self.pub_phase_diff_follower = self.node.create_publisher(Float32, f'/{self.name}/relative/filtered/phase_difference/follower', 10)
 
     def predict(self, dt: float):
         ''' 

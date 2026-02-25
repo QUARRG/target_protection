@@ -9,7 +9,7 @@ from std_srvs.srv import Empty
 from crazyflie_interfaces.srv import Arm
 from std_msgs.msg import Float32
 from crazy_encirclement.filters import BaselineFilter, Baseline3DFilter, wrap_to_2pi, wrap_to_pi
-from crazy_encirclement.bearing_formation_control import bearing_based_formation_control
+from crazy_encirclement.formation_control import formation_control
 from crazy_encirclement_interfaces.msg import Metadata
 from rclpy.qos import QoSPresetProfiles
 from motion_capture_tracking_interfaces.msg import NamedPoseArray
@@ -244,7 +244,7 @@ class Encirclement_Containment(Node):
                     self.info("Lost phase information, returning to hover.")
             
             elif self.state == 3:
-                v = bearing_based_formation_control(self.swarm_poses, self.evader_pos, 0.2 ,1.5*self.radius_nominal)                
+                v = formation_control(self.swarm_poses, self.evader_pos, 0.2 ,1.5*self.radius_nominal)                
                 v = self.R_dw.apply(v) #transforming velocity in drone frame to world frame
                 vel_world = VelocityWorld()
                 vel_world.vel.x = v[0]

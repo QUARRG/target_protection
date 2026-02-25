@@ -9,6 +9,8 @@ from rclpy.duration import Duration
 from motion_capture_tracking_interfaces.msg import NamedPoseArray
 from std_msgs.msg import Bool
 from std_srvs.srv import Empty
+from crazy_encirclement.utils2 import R3_so3
+from scipy.linalg import expm
 from crazyflie_interfaces.srv import Arm
 from std_msgs.msg import Float32
 
@@ -24,14 +26,14 @@ class Evader(Node):
 
         # Parameters
         self.declare_parameter('robot', 'C23')
-        self.declare_parameter('hover_height', 0.3)
-        self.declare_parameter('frame_id', 'world')
+        self.declare_parameter('controls.hover_height', 0.3)
+        self.declare_parameter('others.frame_id', 'world')
         self.declare_parameter('target', 'LIMO')
-        self.declare_parameter('trajectory','eight')
+        self.declare_parameter('trajectory','embedding')
 
         self.robot    = str(self.get_parameter('robot').value)
-        self.hover_height = float(self.get_parameter('hover_height').value)
-        self.frame_id = str(self.get_parameter('frame_id').value)
+        self.hover_height = float(self.get_parameter('controls.hover_height').value)
+        self.frame_id = str(self.get_parameter('others.frame_id').value)
         self.target = str(self.get_parameter('target').value)
         self.trajectory = str(self.get_parameter('trajectory').value)
 
@@ -41,13 +43,13 @@ class Evader(Node):
         # Flags and variables
         self.timer_period = 0.1
         if self.trajectory == 'eight':
-            A = 0.8      # amplitude
+            A = 0.9      # amplitude
             w = 0.5      # frequency
             t_end = 20   # total time
-            dt = 0.01    # time step
+            dt = 0.05    # time step
 
             # Time vector
-            self.t = np.arange(0, t_end, self.timer_period/3)
+            self.t = np.arange(0, 2*np.pi/w, dt)
             self.x = A*np.cos(w*self.t)
             self.y = A*np.sin(w*self.t)*np.cos(w*self.t)
             self.index = 0
@@ -56,6 +58,10 @@ class Evader(Node):
             self.y = np.zeros_like(self.x)
             self.index = 0
             self.increment = 1
+        elif self.trajectory == 'embedding':#hover_height must be 1m for this trajectory
+            self.radius = 0.8
+            self.w_z = 0.2
+            self.s = 0.7
         
 
         self.initial_pose = np.zeros(3)
@@ -156,6 +162,9 @@ class Evader(Node):
                         self.increment = 1
                     self.send_position(np.array([self.x[self.index], self.y[self.index], self.hover_height]))
                     self.index +=self.increment
+                elif self.trajectory == 'embedding':
+                    next_position = self.embedding_traj(self.current_pose,self.radius,self.w_z)
+                    self.send_position(next_position)
             
             # Landing state
             elif self.state == 3:
@@ -163,6 +172,7 @@ class Evader(Node):
                 if self.i_landing < len(self.t_landing)-1:
                     self.i_landing += 1
                 else:
+                    time.sleep(2)
                     self.reboot()
                     self.info('Exiting circle node')  
                     self.destroy_node()
@@ -228,7 +238,7 @@ class Evader(Node):
 
     def landing_traj(self, t_max: float):
         ''' Landing trajectory generation. '''
-        self.t_landing = np.arange(t_max, 0.1, -self.timer_period)
+        self.t_landing = np.arange(t_max, 0.0, -self.timer_period)
         self.i_landing = 0
         self.r_landing = np.zeros((3, len(self.t_landing)))
         self.r_landing[0,:] += self.final_pose[0] * np.ones(len(self.t_landing))
@@ -273,6 +283,21 @@ class Evader(Node):
         msg.z = float(r[2])
         self.position_pub.publish(msg)
 
+    def embedding_traj(self, position, r,w_z):
+        position -= np.array([0,0,self.hover_height]) 
+        phi = np.arctan2(position[1],position[0])
+        phi = np.mod(phi,2*np.pi)
+        desired_pos_xy = np.array([r*np.cos(phi),r*np.sin(phi),0])
+        Rot_z = expm(R3_so3(np.array([[0],[0],[w_z]])))
+        desired_pos_xy_next = Rot_z@desired_pos_xy
+        phi_next = np.arctan2(desired_pos_xy_next[1],desired_pos_xy_next[0])
+        phi_next = np.mod(phi_next,2*np.pi)
+        w_x = self.s*np.cos(phi_next)*np.sin(phi_next)
+        w_y = self.s*np.sin(phi_next)
+        Rot_xy = expm(R3_so3(np.array([w_x,w_y,0]).reshape(3,1)))
+        desired_3d = Rot_xy@desired_pos_xy_next
+        desired_3d += np.array([0,0,self.hover_height])
+        return desired_3d
 
 def main():
     rclpy.init()
