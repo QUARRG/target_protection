@@ -13,7 +13,7 @@ class GPSScannerNodeII(Node):
     def __init__(self):
         super().__init__('gps_scanner_ii_node')
         self.declare_parameter('robot', 'C01')
-        self.declare_parameter('update_hz', 100.0)
+        self.declare_parameter('update_hz', 10.0)
 
         self.robot = self.get_parameter('robot').get_parameter_value().string_value
         self.update_hz = self.get_parameter('update_hz').get_parameter_value().double_value

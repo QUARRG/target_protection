@@ -29,10 +29,10 @@ class Evader(Node):
         self.declare_parameter('controls.hover_height', 0.3)
         self.declare_parameter('others.frame_id', 'world')
         self.declare_parameter('target', 'LIMO')
-        self.declare_parameter('trajectory','embedding')
+        self.declare_parameter('trajectory','follow_limo')
 
         self.robot    = str(self.get_parameter('robot').value)
-        self.hover_height = float(self.get_parameter('controls.hover_height').value)
+        self.hover_height = 2.0 #float(self.get_parameter('controls.hover_height').value)
         self.frame_id = str(self.get_parameter('others.frame_id').value)
         self.target = str(self.get_parameter('target').value)
         self.trajectory = str(self.get_parameter('trajectory').value)
@@ -62,6 +62,7 @@ class Evader(Node):
             self.radius = 0.8
             self.w_z = 0.2
             self.s = 0.7
+        # elif self.trajectory == 'follow_limo':
         
 
         self.initial_pose = np.zeros(3)
@@ -147,8 +148,8 @@ class Evader(Node):
             # Encirclement state
             elif self.state == 2:
                 if self.trajectory == 'follow_limo':
-                    next_pos = self.current_pose + 0.2*(self.target_pos - self.current_pose)
-                    next_pos[2] = self.hover_height
+                    next_pos = self.current_pose + 0.1*(self.target_pos - self.current_pose)
+                    next_pos[2] = np.clip(next_pos[2],0.5,2.0)
                     self.send_position(next_pos)
                 elif self.trajectory == 'eight':
                     if self.index > (len(self.t)-1):
@@ -165,6 +166,8 @@ class Evader(Node):
                 elif self.trajectory == 'embedding':
                     next_position = self.embedding_traj(self.current_pose,self.radius,self.w_z)
                     self.send_position(next_position)
+                elif self.trajectory == 'steady':
+                    self.hover()
             
             # Landing state
             elif self.state == 3:
@@ -172,7 +175,7 @@ class Evader(Node):
                 if self.i_landing < len(self.t_landing)-1:
                     self.i_landing += 1
                 else:
-                    time.sleep(2)
+                    # time.sleep(2)
                     self.reboot()
                     self.info('Exiting circle node')  
                     self.destroy_node()
@@ -226,7 +229,6 @@ class Evader(Node):
             self.i_takeoff += 1
         else:
             self.state = 1
-            self.detection_pub.publish(Bool(data=True))
 
     def takeoff_traj(self, t_max: float):
         ''' Take-off trajectory generation. '''
@@ -252,6 +254,7 @@ class Evader(Node):
     def _evade_callback(self, msg):
         ''' Callback to initiate encirclement procedure. '''
         self.state = 2
+        self.detection_pub.publish(Bool(data=True))
     def arm(self):
         ''' Reboot the system. '''
         req = Arm.Request()

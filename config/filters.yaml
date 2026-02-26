@@ -55,7 +55,7 @@ FollowLimoEncirclementFilterUnicycle:
   target_limo:
     # [x, y, theta, omega, v, z_ground]
     P: [1.0, 1.0, 0.15, 0.5, 0.2, 0.1]
-    Q: [0.01, 0.01, 0.01, 0.1, 0.05, 0.000001]
+    Q: [0.01, 0.01, 0.01, 0.1, 0.05, 0.01]
     V: [0.02, 0.02, 0.02]
   target_drone:
     # [x, y, theta, omega, v, z_ground]
@@ -66,7 +66,7 @@ FollowLimoEncirclementFilterUnicycle:
   relative:
     P_rel: [0.1, 0.1]      # rad, rad
     Q_rel: [0.05, 0.05]    # rad/s, rad/s
-    V_rel: [0.04, 0.04]    # rad, rad
+    V_rel: [0.01, 0.01]    # rad, rad
     Noise_relative: [0.02, 0.02, 0.02]  # m, m, m (x, y, z)
   # Other parameters
   controls:
@@ -75,9 +75,12 @@ FollowLimoEncirclementFilterUnicycle:
     hover_height: 1.0         # meters
     encirclement_height: 1.0  # meters
     zupt_threshold: 0.005     # m/s
-    k_phi: 5.0                # phase controller gain
+    k_phi: 2.0                # phase controller gain
     k_r: 10.0                 # radius controller gain
-    k_omega: 2.0              # deseired omega velocity controller gain
+    k_omega: 1.0              # desired omega velocity controller gain
+  flocking:
+    k_v: 0.35                  # Flocking gain
+    safe_distance_gain: 1.5   # Gain to be used with the nominal radius
   others:
     predict_hz: 100.0
     update_hz: 10.0
