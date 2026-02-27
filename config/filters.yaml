@@ -50,17 +50,17 @@ FilterUnicycle:
   k_phi: 10.0
 
 FollowLimoEncirclementFilterUnicycle:
-  whoisthetarget: limo
+  whoisthetarget: drone
   # Kalman filter parameters for tracking the limo robot
   target_limo:
     # [x, y, theta, omega, v, z_ground]
-    P: [1.0, 1.0, 0.15, 0.5, 0.2, 0.1]
-    Q: [0.01, 0.01, 0.01, 0.1, 0.05, 0.01]
+    P: [1.0, 1.0, 0.15, 0.5, 0.2, 0.01]
+    Q: [0.01, 0.01, 0.05, 0.1, 0.1, 0.01]
     V: [0.02, 0.02, 0.02]
   target_drone:
     # [x, y, theta, omega, v, z_ground]
     P: [1.0, 1.0, 0.15, 0.5, 0.2, 0.1]
-    Q: [0.1, 0.1, 0.01, 0.1, 0.05, 0.2]
+    Q: [0.05, 0.05, 0.05, 0.1, 0.1, 0.2]
     V: [0.02, 0.02, 0.02]
   # Kalman filter parameters for relative filter used by the drones
   relative:

@@ -32,7 +32,8 @@ class Evader(Node):
         self.declare_parameter('trajectory','follow_limo')
 
         self.robot    = str(self.get_parameter('robot').value)
-        self.hover_height = 2.0 #float(self.get_parameter('controls.hover_height').value)
+        self.hover_height = 2.0 
+        # self.hover_height = float(self.get_parameter('controls.hover_height').value)   
         self.frame_id = str(self.get_parameter('others.frame_id').value)
         self.target = str(self.get_parameter('target').value)
         self.trajectory = str(self.get_parameter('trajectory').value)

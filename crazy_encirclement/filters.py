@@ -542,9 +542,15 @@ class FilterUnicycle:
         
         # Row 3 (omega), 4 (v), 5 (z) are 0 (Random Walk / Constant)
 
+        # Discretize process noise using Taylor expansion of the matrix exponential
+        term1 = current_Q * dt
+        term2 = (A @ current_Q + current_Q @ A.T) * (dt**2 / 2.0)
+        term3 = (A @ current_Q @ A.T) * (dt**3 / 3.0)
+        Q_d = term1 + term2 + term3
+
         # 3. Covariance Propagation
         F = self.I + A * dt
-        self.P = F @ self.P @ F.T + current_Q * dt
+        self.P = F @ self.P @ F.T + Q_d
         self.P = 0.5 * (self.P + self.P.T) 
 
         # ---- Publish predicted state ----
