@@ -236,7 +236,7 @@ class FollowUnicycleEncirclement(Node):
             'z_ground_guess': z_ground_init,
             'zupt_threshold': self.zupt_threshold
         }
-        self.filter_unicycle = FilterUnicycle(self.robot, self.filter_unicycle_params, self, self.T_init)
+        self.filter_unicycle = FilterUnicycle(self.robot, self.whoisthetarget, self.filter_unicycle_params, self, self.T_init)
 
         # Initializing filter Relative
         self.FOLLOWER_pose = None
@@ -362,7 +362,7 @@ class FollowUnicycleEncirclement(Node):
                 omega_d = Float32()
                 omega_d.data = rotation_speed
                 self.omega_pub.publish(omega_d)
-                self.info(f'Angular velocity: {rotation_speed:.2f} rad/s, Phase error: {phase_error:.2f}, d_ahead: {d_ahead:.2f}, d_behind: {d_behind:.2f}')
+                # self.info(f'Angular velocity: {rotation_speed:.2f} rad/s, Phase error: {phase_error:.2f}, d_ahead: {d_ahead:.2f}, d_behind: {d_behind:.2f}')
 
                 # --- C. TRAJECTORY GENERATION ---
                 # 5. Polar -> Cartesian (Global Frame)

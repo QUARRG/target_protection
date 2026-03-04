@@ -61,9 +61,15 @@ class Evader(Node):
             self.increment = 1
         elif self.trajectory == 'embedding':#hover_height must be 1m for this trajectory
             self.radius = 0.8
-            self.w_z = 0.2
+            self.w_z = 0.4
             self.s = 0.7
-        # elif self.trajectory == 'follow_limo':
+        elif self.trajectory == 'follow_limo':
+            w = 5   # frequency
+            dt = 0.05    # time step
+            self.t = np.arange(0, 2*np.pi, 0.1)
+            # self.t = np.linspace(0,2*np.pi,0.05)
+            self.z = 0.4*np.sin(self.t)
+            self.index = 0
         
 
         self.initial_pose = np.zeros(3)
@@ -149,9 +155,18 @@ class Evader(Node):
             # Encirclement state
             elif self.state == 2:
                 if self.trajectory == 'follow_limo':
+  
                     next_pos = self.current_pose + 0.1*(self.target_pos - self.current_pose)
-                    next_pos[2] = np.clip(next_pos[2],0.5,2.0)
+                    if self.index >= int(0.7*len(self.z)):
+                        noise = np.random.normal(0,0.20,3)
+                        next_pos[0:2] += noise[0:2]
+                    if self.index >= len(self.z):
+                        self.index = 0
+                    self.info(f'z coordinate {self.z[self.index]}')
+                    next_pos[2] +=self.z[self.index]
+                    next_pos[2] = np.clip(next_pos[2],0.4,2.0)
                     self.send_position(next_pos)
+                    self.index += 1
                 elif self.trajectory == 'eight':
                     if self.index > (len(self.t)-1):
                         self.index = 0
@@ -167,7 +182,7 @@ class Evader(Node):
                 elif self.trajectory == 'embedding':
                     next_position = self.embedding_traj(self.current_pose,self.radius,self.w_z)
                     self.send_position(next_position)
-                elif self.trajectory == 'steady':
+                else:
                     self.hover()
             
             # Landing state
@@ -254,8 +269,11 @@ class Evader(Node):
 
     def _evade_callback(self, msg):
         ''' Callback to initiate encirclement procedure. '''
-        self.state = 2
-        self.detection_pub.publish(Bool(data=True))
+        if msg.data == True:
+            self.state = 2
+        else:
+            self.detection_pub.publish(Bool(data=False))
+            self.land_flag = True
     def arm(self):
         ''' Reboot the system. '''
         req = Arm.Request()

@@ -123,7 +123,8 @@ class PipelineComplete(Node):
         self.has_final = False
         self.land_flag = False
         self.has_order = False
-        self.radius_collapse_distance = 1.0
+        self.evader_flag = False
+        self.dist_limo_uav = 4.0
 
         self.T_init  = np.eye(4)
         self.T_final = np.eye(4)
@@ -158,12 +159,13 @@ class PipelineComplete(Node):
         self.create_subscription(
             StringArray, '/agents_order',
             self._order_callback,
-            10)  
+            10)   
         # Subscription to evader detection
         self.create_subscription(
             Bool, '/evader_detection',
             self._evader_detection_callback,
             10) 
+
         # Wait until order is received
         while (not self.has_order):
             rclpy.spin_once(self, timeout_sec=0.1)
@@ -257,8 +259,7 @@ class PipelineComplete(Node):
             'z_ground_guess': z_ground_init,
             'zupt_threshold': self.zupt_threshold
         }
-        self.filter_unicycle_limo = FilterUnicycle(self.robot, self.filter_unicycle_params_limo, self, self.T_init)
-
+        self.filter_unicycle_limo = FilterUnicycle(self.robot, 'limo', self.filter_unicycle_params_limo, self, self.T_init)
 
         while (self.FOLLOWER_pose is None or self.LEADER_pose is None):
             rclpy.spin_once(self, timeout_sec=0.1)
@@ -317,7 +318,7 @@ class PipelineComplete(Node):
         self.radius_pub = self.create_publisher(Float32, f'/{self.robot}/relative/filtered/radius', 10)
         self.radius_correction_pub = self.create_publisher(Float32, f'/{self.robot}/relative/filtered/radius_correction', 10)
         self.land_pub = self.create_publisher(Bool,'/landing',10)
-        
+        self.detection_pub = self.create_publisher(Bool, '/evader_detection', 10)
         # Arming all drones
         self.arm_client = self.create_client(Arm, self.robot + '/arm')
         # Wait until the service is available
@@ -346,6 +347,9 @@ class PipelineComplete(Node):
 
             # Following LIMO
             elif self.state == 2:
+                # if self.dist_limo_uav <= 3.5 and self.evader_flag == False:
+                #     self._evader_detection()
+                
                 # --- A. ESTIMATION ---
                 target_state = self.filter_unicycle_limo.predict(self.timer_period)
 
@@ -411,27 +415,35 @@ class PipelineComplete(Node):
                 denominator = np.linalg.norm(p) * np.linalg.norm(v) + 1e-6
                 r_correction = self.k_r * dr * nominator / denominator
                 self.r = self.radius_nominal + np.clip(r_correction, 0.0, self.radius_nominal * 2.0)
-                self.radius_pub.publish(Float32(data=self.r))
-                self.radius_correction_pub.publish(Float32(data=r_correction))
-
+                
                 # Desired position in the Vicon frame
                 # self.alpha = wrap_to_2pi(self.alpha)
                 r_des = self._get_desired_position(p_des)   
                 self.send_position(r_des)
-                if (self.radius_collapse_distance < 2.0 * self.radius_nominal):
+                
+                if (self.dist_limo_uav < 2.0 * self.radius_nominal) and self.target == self.target_uav:
                     self.info('collapsing radius')
                     # self.land_flag = True
                     # self.land_pub.publish(Bool(data=True))
                     self.r = 0.2
-                    
 
+                self.radius_pub.publish(Float32(data=self.r))
+                self.radius_correction_pub.publish(Float32(data=r_correction))
+                    
             # Transition from limo to uav
             elif self.state == 3:
                 _ = self.filter_relative.predict(self.timer_period)
                 _ = self.filter_unicycle_drone.predict(self.timer_period)
-                target_pos = np.array([self.UAV_pose.pose.position.x,
-                                       self.UAV_pose.pose.position.y,
-                                       self.UAV_pose.pose.position.z-0.6])
+                _ = self.filter_unicycle_limo.predict(self.timer_period)
+
+                if self.target == self.target_uav:
+                    target_pos = np.array([self.UAV_pose.pose.position.x,
+                                           self.UAV_pose.pose.position.y,
+                                           self.UAV_pose.pose.position.z])
+                else:
+                    target_pos = np.array([self.LIMO_pose.pose.position.x,
+                                           self.LIMO_pose.pose.position.y,
+                                           self.LIMO_pose.pose.position.z + 1.0])
                 
                 v_body = formation_control(self.swarm_poses, target_pos, self.k_v, 2.5 * self.radius_nominal)
 
@@ -448,8 +460,11 @@ class PipelineComplete(Node):
                 # Wait until the drone is close enough to the target to switch to encirclement
                 if np.linalg.norm(target_pos) <  2.0 * self.radius_nominal:
                     self.state = 2
-                    self.encirclement_height = 0*0.15
-                    vel_world = VelocityWorld()
+                    if self.target == self.target_uav:
+                        self.encirclement_height = 0.
+                    else:
+                        self.encirclement_height = 1.
+                    # vel_world = VelocityWorld()
                     # vel_world.vel.z = 0.5
                     # self.velocity_pub.publish(vel_world)
                     # phase = 2 * np.pi * self.order.index(self.robot) / self.n_agents
@@ -464,11 +479,9 @@ class PipelineComplete(Node):
                     y_des = target_pos[1] + self.r * np.sin(self.alpha)
                     z_des = target_pos[2] + self.encirclement_height
                     p_des = np.array([x_des, y_des, z_des])
-                    # phase = 2 * np.pi * self.order.index(self.robot) / self.n_agents
-                    # current_pos = np.array([target_pos[0] + self.radius_nominal * np.cos(phase),
-                    #                         target_pos[1] + self.radius_nominal * np.sin(phase),
-                    #                         target_pos[2] + self.encirclement_height])
-                    self.send_position(p_des)
+                    r_des = self._get_desired_position(p_des) 
+                    self.info(f'p_des {p_des}, r_des {r_des}, encirclement height {self.encirclement_height}, target {self.target} #########################################')
+                    self.send_position(r_des)
 
             # Landing state
             elif self.state == 4:
@@ -509,7 +522,7 @@ class PipelineComplete(Node):
         if self.LIMO_pose is not None and self.UAV_pose is not None:
             limo_pos = np.array([self.LIMO_pose.pose.position.x, self.LIMO_pose.pose.position.y, self.LIMO_pose.pose.position.z])
             uav_pos  = np.array([self.UAV_pose.pose.position.x, self.UAV_pose.pose.position.y, self.UAV_pose.pose.position.z])
-            self.radius_collapse_distance = np.linalg.norm(limo_pos - uav_pos)            
+            self.dist_limo_uav = np.linalg.norm(limo_pos - uav_pos)            
 
         # Getting measurements
         if self.LIMO_pose is not None and \
@@ -629,51 +642,59 @@ class PipelineComplete(Node):
             else:
                 self.order_others.append(robot)
         self.has_order = True
+    
+    def _evader_detection(self):
+        self.evader_flag = True
+        self.detection_pub.publish(Bool(data=True))
+        self.target = self.target_uav
+        vel_world = VelocityWorld()
+        self.velocity_pub.publish(vel_world)
+        # Initializing filter Unicycle for drone
+        initialization_noise = np.random.multivariate_normal(np.zeros(len(self.P_list_drone)), np.diag(np.square(self.P_list_drone)))
+
+        # Initial states - transform from drone body frame to global frame
+        # LIMO_pose is in drone's body frame, need to transform to initial/global frame
+        uav_pos_body = np.array([self.UAV_pose.pose.position.x, self.UAV_pose.pose.position.y])
+        uav_pos_global = self.T_init[0:2, 3] + self.T_init[0:2, 0:2] @ uav_pos_body
+        x_init = uav_pos_global[0] + initialization_noise[0]
+        y_init = uav_pos_global[1] + initialization_noise[1]
+        
+        # Transform heading from drone body frame to global frame
+        rotation = R.from_quat([self.UAV_pose.pose.orientation.x, self.UAV_pose.pose.orientation.y,
+                                self.UAV_pose.pose.orientation.z, self.UAV_pose.pose.orientation.w])
+        heading_body = rotation.as_euler('zyx')[0]
+        drone_heading = np.arctan2(self.T_init[1, 0], self.T_init[0, 0])
+        safe_heading_noise = np.clip(initialization_noise[2], -np.pi/4, np.pi/4)
+        heading_init = wrap_to_pi(drone_heading + heading_body + safe_heading_noise)
+        
+        angular_speed_init = 0.0 # + initialization_noise[3]
+        # Initialize velocity to zero (vehicle starts at rest)
+        # Adding noise would bias the estimate since abs() creates positive bias
+        linear_speed_init  = 0.0
+        z_ground_init      = self.UAV_pose.pose.position.z + initialization_noise[5]
+
+        self.filter_unicycle_params_drone = {
+            'P': self.P_list_drone,
+            'Q': self.Q_list_drone,
+            'V': self.V_list_drone,
+            'position_guess': [x_init, y_init],
+            'heading_guess':  heading_init,
+            'angular_speed_guess': angular_speed_init,
+            'linear_speed_guess':  linear_speed_init,
+            'z_ground_guess': z_ground_init,
+            'zupt_threshold': self.zupt_threshold
+        }
+        self.filter_unicycle_drone = FilterUnicycle(self.robot, 'drone', self.filter_unicycle_params_drone, self, self.T_init)
+        self.state = 3
 
     def _evader_detection_callback(self, msg: Bool):
-        if msg.data == True:
-            self.target = self.target_uav
-            self.k_w = 2
-            vel_world = VelocityWorld()
-            self.velocity_pub.publish(vel_world)
-            # Initializing filter Unicycle for drone
-            initialization_noise = np.random.multivariate_normal(np.zeros(len(self.P_list_drone)), np.diag(np.square(self.P_list_drone)))
-
-            # Initial states - transform from drone body frame to global frame
-            # LIMO_pose is in drone's body frame, need to transform to initial/global frame
-            uav_pos_body = np.array([self.UAV_pose.pose.position.x, self.UAV_pose.pose.position.y])
-            uav_pos_global = self.T_init[0:2, 3] + self.T_init[0:2, 0:2] @ uav_pos_body
-            x_init = uav_pos_global[0] + initialization_noise[0]
-            y_init = uav_pos_global[1] + initialization_noise[1]
-            
-            # Transform heading from drone body frame to global frame
-            rotation = R.from_quat([self.UAV_pose.pose.orientation.x, self.UAV_pose.pose.orientation.y,
-                                    self.UAV_pose.pose.orientation.z, self.UAV_pose.pose.orientation.w])
-            heading_body = rotation.as_euler('zyx')[0]
-            drone_heading = np.arctan2(self.T_init[1, 0], self.T_init[0, 0])
-            safe_heading_noise = np.clip(initialization_noise[2], -np.pi/4, np.pi/4)
-            heading_init = wrap_to_pi(drone_heading + heading_body + safe_heading_noise)
-            
-            angular_speed_init = 0.0 # + initialization_noise[3]
-            # Initialize velocity to zero (vehicle starts at rest)
-            # Adding noise would bias the estimate since abs() creates positive bias
-            linear_speed_init  = 0.0
-            z_ground_init      = self.UAV_pose.pose.position.z + initialization_noise[5]
-
-            self.filter_unicycle_params_drone = {
-                'P': self.P_list_drone,
-                'Q': self.Q_list_drone,
-                'V': self.V_list_drone,
-                'position_guess': [x_init, y_init],
-                'heading_guess':  heading_init,
-                'angular_speed_guess': angular_speed_init,
-                'linear_speed_guess':  linear_speed_init,
-                'z_ground_guess': z_ground_init,
-                'zupt_threshold': self.zupt_threshold
-            }
-            self.filter_unicycle_drone = FilterUnicycle(self.robot, self.filter_unicycle_params_drone, self, self.T_init)
+        if msg.data == False:
+            self.info('Inside evader callback #########################################################################')
+            self.target = self.target_ground
+            # vel_world = VelocityWorld()
+            # self.velocity_pub.publish(vel_world)
             self.state = 3
-
+            
     def takeoff(self):
         ''' Take-off procedure to reach the hover height. '''
         # self.info(f'takeoff position{self.r_takeoff[:, self.i_takeoff]}')

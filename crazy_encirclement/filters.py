@@ -445,8 +445,9 @@ class FilterUnicycle:
     ''' LIEKF for encirclement tasks with 3D ground plane estimation.
         State: [x, y, theta, omega, v, z_ground]
     '''
-    def __init__(self, name: str, params: dict, node: Node, T_init: np.ndarray = np.eye(4)):
+    def __init__(self, name: str, target: str, params: dict, node: Node, T_init: np.ndarray = np.eye(4)):
         self.name = name
+        self.target = target
         self.params = params
         self.node = node
         self.T_init = T_init
@@ -477,9 +478,9 @@ class FilterUnicycle:
         self.zupt_threshold: float = float(self.params.get('zupt_threshold', 0.05))
 
         # State publisher
-        self.pub_states_local: Node.Publisher  = self.node.create_publisher(FilterUnicycleState, f'/{self.name}/unicycle/filtered/local', 10)
-        self.pub_states_global: Node.Publisher = self.node.create_publisher(FilterUnicycleState, f'/{self.name}/unicycle/filtered/global', 10)
-
+        self.pub_states_local: Node.Publisher  = self.node.create_publisher(FilterUnicycleState, f'/{self.name}/unicycle/{self.target}/filtered/local',  10)
+        self.pub_states_global: Node.Publisher = self.node.create_publisher(FilterUnicycleState, f'/{self.name}/unicycle/{self.target}/filtered/global', 10)
+    
         self.I = np.eye(self.dim_state)
 
     def predict(self, dt: float) -> dict:
