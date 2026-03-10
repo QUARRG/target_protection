@@ -347,8 +347,8 @@ class PipelineComplete(Node):
 
             # Following LIMO
             elif self.state == 2:
-                # if self.dist_limo_uav <= 3.5 and self.evader_flag == False:
-                #     self._evader_detection()
+                if self.dist_limo_uav <= 3.5 and self.evader_flag == False:
+                    self._evader_detection()
                 
                 # --- A. ESTIMATION ---
                 target_state = self.filter_unicycle_limo.predict(self.timer_period)
@@ -458,12 +458,12 @@ class PipelineComplete(Node):
                 self.velocity_pub.publish(vel_world)
 
                 # Wait until the drone is close enough to the target to switch to encirclement
-                if np.linalg.norm(target_pos) <  2.0 * self.radius_nominal:
+                if np.linalg.norm(target_pos) <  1.5 * self.radius_nominal:
                     self.state = 2
                     if self.target == self.target_uav:
                         self.encirclement_height = 0.
                     else:
-                        self.encirclement_height = 1.
+                        self.encirclement_height = 0.5
                     # vel_world = VelocityWorld()
                     # vel_world.vel.z = 0.5
                     # self.velocity_pub.publish(vel_world)

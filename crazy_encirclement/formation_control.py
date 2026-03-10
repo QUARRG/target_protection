@@ -6,7 +6,7 @@ def formation_control(agents_dist, evader_dist, k,r):
     for i in range(n_agents):
         wij = (np.linalg.norm(agents_dist[i]) - r) /np.linalg.norm(agents_dist[i])
         u += wij*(agents_dist[i])
-    wit = (np.linalg.norm(evader_dist))/np.linalg.norm(evader_dist)
+    wit = (np.linalg.norm(evader_dist ))/np.linalg.norm(evader_dist)
     u += wit*(evader_dist)
     u = k*u
     return u

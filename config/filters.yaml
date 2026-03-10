@@ -65,19 +65,19 @@ FollowLimoEncirclementFilterUnicycle:
   # Kalman filter parameters for relative filter used by the drones
   relative:
     P_rel: [0.1, 0.1]      # rad, rad
-    Q_rel: [0.05, 0.05]    # rad/s, rad/s
+    Q_rel: [0.07, 0.07]    # rad/s, rad/s
     V_rel: [0.01, 0.01]    # rad, rad
     Noise_relative: [0.02, 0.02, 0.02]  # m, m, m (x, y, z)
   # Other parameters
   controls:
-    radius_nominal: 0.4      # meters
-    omega_nominal: 0.4        # radians per second
-    hover_height: 0.4        # meters
-    encirclement_height: 0.4  # meters
+    radius_nominal: 0.5      # meters
+    omega_nominal: 1.0        # radians per second
+    hover_height: 0.5        # meters
+    encirclement_height: 0.5  # meters
     zupt_threshold: 0.005     # m/s
-    k_phi: 2.0                # phase controller gain
-    k_r: 10.0                 # radius controller gain
-    k_omega: 1.0              # desired omega velocity controller gain
+    k_phi: 2.1              # phase controller gain
+    k_r: 15.0                 # radius controller gain
+    k_omega: 1.1             # desired omega velocity controller gain
   flocking:
     k_v: 0.35                  # Flocking gain
     safe_distance_gain: 1.5   # Gain to be used with the nominal radius
@@ -91,7 +91,7 @@ FilterSpatial:
   # General parameters
   predict_hz: 100.0
   update_hz: 10.0
-  seed: 60
+  seed: 10
   # Parameters for 3D circle distortion
   embedding_fn_name: modelE  # Always modelE for spatial filter
   frame_id: world

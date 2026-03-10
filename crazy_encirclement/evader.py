@@ -40,7 +40,7 @@ class Evader(Node):
 
         # Reboot client
         self.reboot_client = self.create_client(Empty, self.robot + '/reboot')
-
+        self.noise = np.zeros(3)
         # Flags and variables
         self.timer_period = 0.1
         if self.trajectory == 'eight':
@@ -66,9 +66,9 @@ class Evader(Node):
         elif self.trajectory == 'follow_limo':
             w = 5   # frequency
             dt = 0.05    # time step
-            self.t = np.arange(0, 2*np.pi, 0.1)
+            self.t = np.arange(0, 2*np.pi, 0.2)
             # self.t = np.linspace(0,2*np.pi,0.05)
-            self.z = 0.4*np.sin(self.t)
+            self.z = 0.8*np.sin(self.t)
             self.index = 0
         
 
@@ -154,17 +154,28 @@ class Evader(Node):
             
             # Encirclement state
             elif self.state == 2:
-                if self.trajectory == 'follow_limo':
-  
-                    next_pos = self.current_pose + 0.1*(self.target_pos - self.current_pose)
-                    if self.index >= int(0.7*len(self.z)):
-                        noise = np.random.normal(0,0.20,3)
-                        next_pos[0:2] += noise[0:2]
-                    if self.index >= len(self.z):
-                        self.index = 0
-                    self.info(f'z coordinate {self.z[self.index]}')
-                    next_pos[2] +=self.z[self.index]
+                if self.trajectory == 'follow_limo': 
+                    if np.linalg.norm(self.target_pos - self.current_pose) > 0.6:                  
+                        if self.index >= int(0.5*len(self.z)):
+                            self.noise = np.zeros(3)
+                            
+                        if self.index >= len(self.z):
+                            self.index = 0
+                            noise_xy = np.random.uniform(-0.15,0.15)
+                            noise_z = np.random.uniform(0.0,0.3)
+                            self.noise = np.array([0, 0, noise_z])
+                        self.info(f'noise {self.noise}')
+                        # if self.index > 0:
+                        #     self.current_pose[2] -= self.z[self.index-1]
+                        next_pos = self.current_pose + 0.1*(self.target_pos - self.current_pose) + self.noise
+                        # next_pos[2] +=self.z[self.index]   
+                    else:
+                        next_pos = self.current_pose + 0.1*(self.target_pos - self.current_pose)
+
                     next_pos[2] = np.clip(next_pos[2],0.4,2.0)
+                    next_pos[0] = np.clip(next_pos[0],-2.0,2.0)
+                    next_pos[1] = np.clip(next_pos[1],-1.0,1.0)
+
                     self.send_position(next_pos)
                     self.index += 1
                 elif self.trajectory == 'eight':
