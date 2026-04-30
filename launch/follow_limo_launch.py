@@ -105,13 +105,13 @@ def parse_yaml(context):
     pursuers_list = robots_list
     for robot in robots_list:
         # Nodes for each robot
-        # Nodes.append(Node(
-        #     package='crazy_encirclement',
-        #     executable='follow_limo',
-        #     name=robot+'_follow_limo',
-        #     output='screen',
-        #     parameters=[{'robot': robot, 'relative': relative}],
-        #     ))
+        Nodes.append(Node(
+            package='crazy_encirclement',
+            executable='follow_limo',
+            name=robot+'_follow_limo',
+            output='screen',
+            parameters=[{'robot': robot, 'relative': relative}],
+            ))
 
         # Watch dog node for each robot
         Nodes.append(Node(
