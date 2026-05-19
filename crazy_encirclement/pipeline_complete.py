@@ -4,7 +4,7 @@ import numpy as np
 from rclpy.node import Node
 from geometry_msgs.msg import PoseStamped
 from crazyflie_interfaces.msg import StringArray, Position, VelocityWorld
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, String
 from std_srvs.srv import Empty
 from crazyflie_interfaces.srv import Arm
 from std_msgs.msg import Float32
@@ -125,6 +125,8 @@ class PipelineComplete(Node):
         self.has_order = False
         self.evader_flag = False
         self.dist_limo_uav = 4.0
+        self.pursuit_color = '0x12239E'
+        self.surveillance_color = '0xAAC00'
 
         self.T_init  = np.eye(4)
         self.T_final = np.eye(4)
@@ -319,6 +321,8 @@ class PipelineComplete(Node):
         self.radius_correction_pub = self.create_publisher(Float32, f'/{self.robot}/relative/filtered/radius_correction', 10)
         self.land_pub = self.create_publisher(Bool,'/landing',10)
         self.detection_pub = self.create_publisher(Bool, '/evader_detection', 10)
+        self.color_pub = self.create_publisher(String,'/'+ self.robot + '/color_led', 10)
+
         # Arming all drones
         self.arm_client = self.create_client(Arm, self.robot + '/arm')
         # Wait until the service is available
@@ -338,6 +342,7 @@ class PipelineComplete(Node):
             if self.state == 0:
                 if self.has_initial_pose:
                     self.takeoff()
+                    self.color_pub.publish(String(data=self.surveillance_color))
 
             # Hover state
             elif self.state == 1:
@@ -349,6 +354,7 @@ class PipelineComplete(Node):
             elif self.state == 2:
                 if self.dist_limo_uav <= 3.5 and self.evader_flag == False:
                     self._evader_detection()
+                    self.color_pub.publish(String(data=self.pursuit_color))
                 
                 # --- A. ESTIMATION ---
                 target_state = self.filter_unicycle_limo.predict(self.timer_period)
@@ -425,7 +431,7 @@ class PipelineComplete(Node):
                     self.info('collapsing radius')
                     # self.land_flag = True
                     # self.land_pub.publish(Bool(data=True))
-                    self.r = 0.2
+                    self.r = 0.3
 
                 self.radius_pub.publish(Float32(data=self.r))
                 self.radius_correction_pub.publish(Float32(data=r_correction))
