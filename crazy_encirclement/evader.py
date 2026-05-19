@@ -7,7 +7,7 @@ from crazyflie_interfaces.msg import StringArray, Position
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy, QoSPresetProfiles
 from rclpy.duration import Duration
 from motion_capture_tracking_interfaces.msg import NamedPoseArray
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, String
 from std_srvs.srv import Empty
 from crazy_encirclement.utils2 import R3_so3
 from scipy.linalg import expm
@@ -37,6 +37,7 @@ class Evader(Node):
         self.frame_id = str(self.get_parameter('others.frame_id').value)
         self.target = str(self.get_parameter('target').value)
         self.trajectory = str(self.get_parameter('trajectory').value)
+        self.color = '0x8E1F20' #red color for evader
 
         # Reboot client
         self.reboot_client = self.create_client(Empty, self.robot + '/reboot')
@@ -134,6 +135,7 @@ class Evader(Node):
         # Crazyflie position command publisher
         self.position_pub = self.create_publisher(Position, f'/{self.robot}/cmd_position', 10)
         self.detection_pub = self.create_publisher(Bool, '/evader_detection', 10)
+        self.color_pub = self.create_publisher(String,'/'+ self.robot + '/color_led', 10)
 
         # input("Press Enter to takeoff")
         self.timer = self.create_timer(self.timer_period, self.timer_callback)
@@ -147,6 +149,7 @@ class Evader(Node):
             if self.state == 0:
                 if self.has_initial_pose:
                     self.takeoff()
+                    self.color_pub.publish(String(data=self.color))
 
             # Hover state
             elif self.state == 1:
