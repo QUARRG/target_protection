@@ -5,7 +5,8 @@ from rclpy.node import Node
 from geometry_msgs.msg import PoseStamped
 from crazyflie_interfaces.msg import StringArray, Position
 from motion_capture_tracking_interfaces.msg import NamedPoseArray
-from std_msgs.msg import Bool
+from crazyflie_interfaces.srv import Arm
+from std_msgs.msg import Bool, String
 from std_srvs.srv import Empty
 from std_msgs.msg import Float32
 from crazy_encirclement.filters import (
@@ -119,6 +120,8 @@ class CircleDistortion(Node):
         self.in_communication_outage = False  # Track outage state
         self.outage_started = False  # Flag to detect outage transition
         self.outage_ended = False    # Flag to detect outage ending transition
+        self.relative_color = '0x480091'
+        self.gps_color = '0x0AAC00'
 
         self.state = 0
         # 0-take-off, 1-hover, 2-encirclement, 3-landing
@@ -253,6 +256,7 @@ class CircleDistortion(Node):
         self.publish_gain  = self.create_publisher(Float32, f'/{self.robot}/filtered/controller_gain', 10)
         self.publish_phase_diff_leader = self.create_publisher(Float32, f'/{self.robot}/filtered/phase_diff/leader', 10)
         self.publish_phase_diff_follower = self.create_publisher(Float32, f'/{self.robot}/filtered/phase_diff/follower', 10)
+        self.color_pub = self.create_publisher(String,'/'+ self.robot + '/color_led', 10)
 
         # Metadata publisher
         self.metadata_pub = self.create_publisher(Metadata, f'/{self.robot}/metadata', 10)
@@ -262,6 +266,14 @@ class CircleDistortion(Node):
         self.create_subscription(Float32, f'/{self.leader}/filtered/phase',   self._phase_callback_leader, 1)
         self.create_subscription(Float32, f'/{self.follower}/filtered/phase', self._phase_callback_follower, 1)
         
+        # Arming all drones
+        self.arm_client = self.create_client(Arm, self.robot + '/arm')
+        # Wait until the service is available
+        while not self.arm_client.wait_for_service(timeout_sec=1.0):
+            self.get_logger().info('Service not available, waiting again...')
+        self.arm()
+        time.sleep(2)
+
         self.timer = self.create_timer(self.timer_period, self.timer_callback)
 
     def timer_callback(self):
@@ -272,6 +284,7 @@ class CircleDistortion(Node):
                 if self.has_initial_pose:
                     self.phases[1] = self.initial_phase
                     self.takeoff()
+                    self.color_pub.publish(String(data=self.gps_color))
                     self.filter_gps.pub_phase.publish(Float32(data=self.phases[1]))
                     self.publish_phase_differences()
 
@@ -297,12 +310,14 @@ class CircleDistortion(Node):
                     self.info("=== COMMUNICATION OUTAGE STARTED ===")
                     self.info("Synchronizing relative filters with recent states")
                     self._sync_relative_filters()
+                    self.color_pub.publish(String(data=self.relative_color))
                     self.outage_started = True
                     self.outage_ended = False
                 
                 # Handle transition OUT of outage (Relative -> GPS)
                 if not self.in_communication_outage and was_in_outage and not self.outage_ended:
                     self.info("=== COMMUNICATION OUTAGE ENDED ===")
+                    self.color_pub.publish(String(data=self.gps_color))
                     self.outage_ended = True
                     self.outage_started = False
                 
@@ -570,6 +585,22 @@ class CircleDistortion(Node):
         metadata.stamp = self.get_clock().now().to_msg()
         self.metadata_pub.publish(metadata)
 
+    def arm(self):
+        ''' Reboot the system. '''
+        req = Arm.Request()
+        req.arm = True
+        self.arm_client.call_async(req)
+        # Call the service and get the response asynchronously
+        future = self.arm_client.call_async(req)
+        # Wait for the result and handle the response
+        rclpy.spin_until_future_complete(self, future)
+
+        # Now handle the response
+        if future.result() is not None:
+            self.get_logger().info(f'Service call successful, response: {future.result()}')
+        else:
+            self.get_logger().error('Service call failed')  
+            
     def _landing_callback(self, msg):
         ''' Callback to initiate landing procedure. '''
         self.land_flag = msg.data
