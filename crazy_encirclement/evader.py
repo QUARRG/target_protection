@@ -167,7 +167,7 @@ class Evader(Node):
                             noise_xy = np.random.uniform(-0.15,0.15)
                             noise_z = np.random.uniform(0.0,0.3)
                             self.noise = np.array([0, 0, noise_z])
-                        self.info(f'noise {self.noise}')
+                        # self.info(f'noise {self.noise}')
                         # if self.index > 0:
                         #     self.current_pose[2] -= self.z[self.index-1]
                         next_pos = self.current_pose + 0.1*(self.target_pos - self.current_pose) + self.noise
@@ -286,6 +286,7 @@ class Evader(Node):
         if msg.data == True:
             self.state = 2
         else:
+            self.info('Evade command received, but data is False. No action taken.')
             self.detection_pub.publish(Bool(data=False))
             self.land_flag = True
     def arm(self):

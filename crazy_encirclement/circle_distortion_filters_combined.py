@@ -68,8 +68,8 @@ class CircleDistortion(Node):
         self.declare_parameter('seed', 42)
 
         # Time parameters for communication outage simulation
-        self.declare_parameter('outage_start_time', 60.0)  # Start communication outage at 20s
-        self.declare_parameter('outage_duration', 60.0)    # Outage lasts 20s (until 40s)
+        self.declare_parameter('outage_start_time', 30.0)  # Start communication outage at 20s
+        self.declare_parameter('outage_duration', 30.0)    # Outage lasts 20s (until 40s)
 
         # Get filter parameters
         self.P_ego_list = self.get_parameter('P_ego').value

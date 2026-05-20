@@ -539,22 +539,22 @@ class PipelineComplete(Node):
             # Limo
             measurement_limo_noise = np.random.multivariate_normal(np.zeros(3), np.diag(np.square(self.V_list_limo[0:3])))
             measurement_limo = np.array([self.LIMO_pose.pose.position.x, self.LIMO_pose.pose.position.y, self.LIMO_pose.pose.position.z])
-            measurement_limo += measurement_limo_noise
+            # measurement_limo += measurement_limo_noise
 
             if self.filter_unicycle_drone is not None:
                 measurement_uav_noise = np.random.multivariate_normal(np.zeros(3), np.diag(np.square(self.V_list_drone[0:3])))
                 measurement_uav = np.array([self.UAV_pose.pose.position.x, self.UAV_pose.pose.position.y, self.UAV_pose.pose.position.z])
-                measurement_uav += measurement_uav_noise  
+                # measurement_uav += measurement_uav_noise  
             
             # Follower
             measurement_follower_noise = np.random.multivariate_normal(np.zeros(3), np.diag(np.square(self.Noise_relative_list)))
             measurement_follower = np.array([self.FOLLOWER_pose.pose.position.x, self.FOLLOWER_pose.pose.position.y, self.FOLLOWER_pose.pose.position.z])
-            measurement_follower += measurement_follower_noise
+            # measurement_follower += measurement_follower_noise
             
             # Leader
             measurement_leader_noise = np.random.multivariate_normal(np.zeros(3), np.diag(np.square(self.Noise_relative_list)))
             measurement_leader = np.array([self.LEADER_pose.pose.position.x, self.LEADER_pose.pose.position.y, self.LEADER_pose.pose.position.z])
-            measurement_leader += measurement_leader_noise
+            # measurement_leader += measurement_leader_noise
 
             # 2. Updating filters
             # Run filters in both Hover (1) and Encircle (2) states
