@@ -26,22 +26,7 @@ setup(
     entry_points={
         'console_scripts': [
             'agents_order = crazy_encirclement.agents_order:main',
-            'circle_distortion_filter_gps = crazy_encirclement.circle_distortion_filter_gps:main',
-            'circle_distortion_baseline = crazy_encirclement.circle_distortion_baseline:main',
-            'circle_distortion_filter_relative = crazy_encirclement.circle_distortion_filter_relative:main',
-            'circle_distortion_filters_combined = crazy_encirclement.circle_distortion_filters_combined:main',
-            'gps = crazy_encirclement.gps:main',
-            'gps_scanner = crazy_encirclement.gps_scanner:main',
             'gps_scanner_ii = crazy_encirclement.gps_scanner_ii:main',
-            'motion_capture_tracking_relative = crazy_encirclement.motion_capture_tracking_relative:main',
-            'follow_limo = crazy_encirclement.follow_limo:main',
-            'follow_limo_filter_unicycle = crazy_encirclement.follow_limo_filter_unicycle:main',
-            'follow_limo_encirclement_filter_unicycle = crazy_encirclement.follow_limo_encirclement_filter_unicycle:main',
-            'target_encirclement= crazy_encirclement.target_encirclement:main',
-            'circle_distortion_baseline_spatial = crazy_encirclement.circle_distortion_baseline_spatial:main',
-            'command_center = crazy_encirclement.command_center:main',
-            'bearing = crazy_encirclement.bearing:main',
-            'encirclement_containment_baseline = crazy_encirclement.encirclement_containment_baseline:main',
             'evader = crazy_encirclement.evader:main',
             'pipeline_complete = crazy_encirclement.pipeline_complete:main'
         ],
