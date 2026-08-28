@@ -24,7 +24,7 @@ warnings.filterwarnings('ignore')
 plt.rcParams.update({'text.usetex': True, 'font.size': 20, 'figure.dpi': 150})
 
 # Import helpers
-from crazy_encirclement.filters import (
+from target_protection.filters import (
     build_Re,
     wrap_to_pi,
     wrap_to_2pi,

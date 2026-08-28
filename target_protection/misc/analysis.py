@@ -13,7 +13,7 @@ warnings.filterwarnings('ignore')
 plt.rcParams.update({'text.usetex': True, 'font.size': 24, 'figure.dpi': 150})
 
 # helpers
-from crazy_encirclement.filters import wrap_to_pi
+from target_protection.filters import wrap_to_pi
 
 # Configuration
 base_dir = Path('/home/paulo/Documents/k_03/')

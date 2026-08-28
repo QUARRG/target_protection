@@ -92,7 +92,7 @@ def parse_yaml(context):
 
     # Filter configuration file
     filter_yaml = os.path.join(
-        get_package_share_directory('crazy_encirclement'),
+        get_package_share_directory('target_protection'),
         'config',
         'filters.yaml')
 
@@ -114,7 +114,7 @@ def parse_yaml(context):
     for robot in robots_list:
         # Nodes for each robot
         Nodes.append(Node(
-            package='crazy_encirclement',
+            package='target_protection',
             executable='pipeline_complete',
             name=robot+'_pipeline_complete',
             output='screen',
@@ -126,7 +126,7 @@ def parse_yaml(context):
         # GPS/Scanner II Node for each robot
         scanner_update_hz = filter_yaml_content.get('FollowLimoEncirclementFilterUnicycle', {}).get('others', {}).get('update_hz', 10.0)
         Nodes.append(Node(
-            package='crazy_encirclement',
+            package='target_protection',
             executable='gps_scanner_ii',
             name=robot+'_gps_scanner_ii_node',
             output='screen',
@@ -152,7 +152,7 @@ def parse_yaml(context):
             parameters=[{'robot_prefix': evader}]
             ))
         Nodes.append(Node(
-            package='crazy_encirclement',
+            package='target_protection',
             executable='evader',
             name=evader+'_evader',
             output='screen',
@@ -161,7 +161,7 @@ def parse_yaml(context):
         
     # Agents order node
     Nodes.append(Node(
-        package='crazy_encirclement',
+        package='target_protection',
         executable='agents_order',
         name='agents_order',
         output='screen',

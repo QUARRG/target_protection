@@ -2,7 +2,7 @@ from setuptools import find_packages, setup
 import os
 from glob import glob
 
-package_name = 'crazy_encirclement'
+package_name = 'target_protection'
 
 setup(
     name=package_name,
@@ -25,10 +25,10 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'agents_order = crazy_encirclement.agents_order:main',
-            'gps_scanner_ii = crazy_encirclement.gps_scanner_ii:main',
-            'evader = crazy_encirclement.evader:main',
-            'pipeline_complete = crazy_encirclement.pipeline_complete:main'
+            'agents_order = target_protection.agents_order:main',
+            'gps_scanner_ii = target_protection.gps_scanner_ii:main',
+            'evader = target_protection.evader:main',
+            'pipeline_complete = target_protection.pipeline_complete:main'
         ],
     },
 )

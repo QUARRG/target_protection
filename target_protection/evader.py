@@ -9,7 +9,7 @@ from rclpy.duration import Duration
 from motion_capture_tracking_interfaces.msg import NamedPoseArray
 from std_msgs.msg import Bool, String
 from std_srvs.srv import Empty
-from crazy_encirclement.utils2 import R3_so3
+from target_protection.utils2 import R3_so3
 from scipy.linalg import expm
 from crazyflie_interfaces.srv import Arm
 from std_msgs.msg import Float32

@@ -117,13 +117,13 @@ Filter, controller, noise, and loop-rate parameters are defined in [`config/filt
 Launch the complete experiment with the C++ Crazyflie backend:
 
 ```bash
-ros2 launch crazy_encirclement pipeline_complete_launch.py backend:=cpp mocap:=True rviz:=False
+ros2 launch target_protection pipeline_complete_launch.py backend:=cpp mocap:=True rviz:=False
 ```
 
 Alternative launch arguments include `backend:=cflib` and `backend:=sim`. The simulation backend additionally requires the Crazyswarm2 simulation dependencies and Crazyflie firmware Python bindings. Configuration files can be overridden explicitly:
 
 ```bash
-ros2 launch crazy_encirclement pipeline_complete_launch.py \
+ros2 launch target_protection pipeline_complete_launch.py \
   crazyflies_yaml_file:=/path/to/crazyflies.yaml \
   motion_capture_yaml_file:=/path/to/motion_capture.yaml
 ```

@@ -7,7 +7,7 @@ from pathlib import Path
 from scipy import optimize
 import warnings
 
-from crazy_encirclement.filters import (
+from target_protection.filters import (
     build_Re,
     wrap_to_pi,
     wrap_to_2pi,
