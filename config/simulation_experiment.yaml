@@ -1,0 +1,9 @@
+simulation_experiment_controller:
+  ros__parameters:
+    experiment_type: complete
+    defenders_takeoff_time: 10.0
+    evader_takeoff_time: 10.0
+    encirclement_time: 18.0
+    evade_time: 25.0
+    evader_desengage: 30.0
+    land_time: 120.0

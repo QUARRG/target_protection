@@ -1,5 +1,4 @@
 import numpy as np
-from icecream import ic
 def formation_control(agents_dist, evader_dist, k,r):
     n_agents = len(agents_dist)
     u = np.zeros(3)
