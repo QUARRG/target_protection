@@ -1,10 +1,17 @@
 
 import os
+import re
 import yaml
 import numpy as np
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, OpaqueFunction, SetLaunchConfiguration
+from launch.actions import (
+    DeclareLaunchArgument,
+    ExecuteProcess,
+    OpaqueFunction,
+    SetLaunchConfiguration,
+    TimerAction,
+)
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from launch.conditions import LaunchConfigurationEquals
@@ -18,6 +25,10 @@ def parse_yaml(context):
     use_sim = ParameterValue(
         LaunchConfiguration('use_sim'),
         value_type=bool)
+    start_crazysim = LaunchConfiguration('start_crazysim').perform(
+        context).lower() in ('true', '1', 'yes')
+    limo_pose_port = int(
+        LaunchConfiguration('crazysim_limo_pose_port').perform(context))
 
     # Load the crazyflies YAML file
     crazyflies_yaml = LaunchConfiguration('crazyflies_yaml_file').perform(context)
@@ -47,6 +58,19 @@ def parse_yaml(context):
     sim_target_name = 'LIMO'
     sim_target_position = [0.0, 0.0]
     if use_sim_enabled:
+        # CrazySim provides state through the firmware estimator.  The CFLib
+        # server only emits each drone's PoseStamped and world->drone TF when
+        # the firmware pose log is enabled for that robot type.
+        for robot_name, robot_config in crazyflies['robots'].items():
+            if not robot_config.get('enabled', False):
+                continue
+            robot_type = crazyflies['robot_types'][robot_config['type']]
+            firmware_logging = robot_type.setdefault('firmware_logging', {})
+            firmware_logging['enabled'] = True
+            default_topics = firmware_logging.setdefault(
+                'default_topics', {})
+            default_topics['pose'] = {'frequency': 10}
+
         layout_seed = int(
             LaunchConfiguration('simulation_layout_seed').perform(context))
         generator = np.random.default_rng(
@@ -140,6 +164,83 @@ def parse_yaml(context):
     # copy relevent settings to server params
     server_params[1]['poses_qos_deadline'] = motion_capture_params['topics']['poses']['qos']['deadline']
     Nodes = []
+
+    enabled_robots = [
+        name for name, config in crazyflies['robots'].items()
+        if config['enabled']
+    ]
+
+    if use_sim_enabled and start_crazysim:
+        firmware_path = os.path.abspath(os.path.expanduser(
+            LaunchConfiguration('crazysim_firmware_path').perform(context)))
+        coordinates_path = os.path.abspath(os.path.expanduser(
+            LaunchConfiguration('crazysim_coordinates_file').perform(context)))
+        model = LaunchConfiguration('crazysim_model').perform(context)
+        limo_model_path = os.path.abspath(os.path.expanduser(
+            LaunchConfiguration('crazysim_limo_model_path').perform(context)))
+        launcher = os.path.join(
+            firmware_path,
+            'tools',
+            'crazyflie-simulation',
+            'simulator_files',
+            'mujoco',
+            'launch',
+            'sitl_multiagent_text.sh')
+        firmware_binary = os.path.join(
+            firmware_path, 'sitl_make', 'build', 'cf2')
+
+        if not os.path.isfile(launcher):
+            raise FileNotFoundError(
+                f'CrazySim MuJoCo launcher not found: {launcher}')
+        if not os.path.isfile(firmware_binary):
+            raise FileNotFoundError(
+                'CrazySim firmware is not built. Expected executable at '
+                f'{firmware_binary}')
+        if not os.path.isfile(limo_model_path):
+            raise FileNotFoundError(
+                f'LIMO MuJoCo model not found: {limo_model_path}')
+
+        coordinates_directory = os.path.dirname(coordinates_path)
+        if coordinates_directory:
+            os.makedirs(coordinates_directory, exist_ok=True)
+
+        with open(coordinates_path, 'w', encoding='utf-8') as coordinates_file:
+            for index, robot in enumerate(enabled_robots):
+                uri = str(crazyflies['robots'][robot]['uri'])
+                match = re.fullmatch(r'udp://[^:]+:(\d+)', uri)
+                expected_port = 19850 + index
+                if match is None or int(match.group(1)) != expected_port:
+                    raise ValueError(
+                        f'{robot} must use UDP port {expected_port} to match '
+                        f'CrazySim spawn index {index}; configured URI is {uri}.')
+
+                position = crazyflies['robots'][robot]['initial_position']
+                coordinates_file.write(
+                    f'{float(position[0]):.9f},{float(position[1]):.9f}\n')
+                print(
+                    f'CrazySim agent {index}: {robot}, port={expected_port}, '
+                    f'position=({float(position[0]):.3f}, '
+                    f'{float(position[1]):.3f})')
+
+        Nodes.append(ExecuteProcess(
+            cmd=[
+                'bash', launcher,
+                '-m', model,
+                '-f', coordinates_path,
+                '--limo-model', limo_model_path,
+                '--limo-pose-port', str(limo_pose_port),
+            ],
+            cwd=firmware_path,
+            output='screen',
+            additional_env={
+                'PATH': os.pathsep.join(filter(None, [
+                    LaunchConfiguration(
+                        'crazysim_python_bin').perform(context),
+                    os.environ.get('PATH', ''),
+                ])),
+            },
+        ))
+
     Nodes.append(Node(
             package='motion_capture_tracking',
             executable='motion_capture_tracking_node',
@@ -148,14 +249,28 @@ def parse_yaml(context):
             output='screen',
             parameters= [motion_capture_params],
         ))
-    Nodes.append(Node(
-            package='crazyflie',
-            executable='crazyflie_server.py',
+    cflib_server = Node(
+            package='crazyflie_server_py',
+            executable='crazyflie_server',
             condition=LaunchConfigurationEquals('backend','cflib'),
             name='crazyflie_server',
             output='screen',
             parameters= server_params,
+            additional_env={
+                'PYTHONPATH': os.pathsep.join(filter(None, [
+                    LaunchConfiguration('cflib_pythonpath').perform(context),
+                    os.environ.get('PYTHONPATH', ''),
+                ])),
+            },
+        )
+    if use_sim_enabled and start_crazysim:
+        Nodes.append(TimerAction(
+            period=float(LaunchConfiguration(
+                'crazysim_server_delay').perform(context)),
+            actions=[cflib_server],
         ))
+    else:
+        Nodes.append(cflib_server)
     Nodes.append(Node(
             package='crazyflie',
             executable='crazyflie_server',
@@ -175,14 +290,10 @@ def parse_yaml(context):
             parameters= server_params,
         ))
 
-    enabled_robots = [
-        name for name, config in crazyflies['robots'].items()
-        if config['enabled']
-    ]
     Nodes.append(Node(
             package='target_protection',
             executable='sim_point_mass',
-            condition=LaunchConfigurationEquals('backend', 'sim'),
+            condition=IfCondition(LaunchConfiguration('use_sim')),
             name='sim_point_mass',
             output='screen',
             parameters=[{
@@ -191,14 +302,16 @@ def parse_yaml(context):
                 'initial_x': float(sim_target_position[0]),
                 'initial_y': float(sim_target_position[1]),
                 'circle_radius': 2.0,
-                'angular_velocity': 0.5,
-                'use_sim_time': True,
+                'angular_velocity': 0.1,
+                'mujoco_pose_enabled': start_crazysim,
+                'mujoco_pose_port': limo_pose_port,
+                'use_sim_time': False,
             }],
         ))
     Nodes.append(Node(
             package='target_protection',
             executable='sim_pose_bridge',
-            condition=LaunchConfigurationEquals('backend', 'sim'),
+            condition=IfCondition(LaunchConfiguration('use_sim')),
             name='sim_pose_bridge',
             output='screen',
             parameters=[{'robot_names': enabled_robots + [sim_target_name]}],
@@ -300,23 +413,51 @@ def generate_launch_description():
         DeclareLaunchArgument('use_sim', default_value='False'),
         DeclareLaunchArgument('simulation_layout_seed', default_value='-1'),
         DeclareLaunchArgument('evader_initial_distance', default_value='10.0'),
+        DeclareLaunchArgument('start_crazysim', default_value='True'),
+        DeclareLaunchArgument(
+            'crazysim_firmware_path',
+            default_value=os.path.expanduser(
+                '~/ros2_ws/src/CrazySim/crazyflie-firmware')),
+        DeclareLaunchArgument(
+            'crazysim_coordinates_file',
+            default_value='/tmp/target_protection_crazysim_layout.txt'),
+        DeclareLaunchArgument(
+            'cflib_pythonpath',
+            default_value=os.path.expanduser(
+                '~/venvs/crazyflie/lib/python3.12/site-packages')),
+        DeclareLaunchArgument(
+            'crazysim_python_bin',
+            default_value=os.path.expanduser('~/venvs/crazyflie/bin')),
+        DeclareLaunchArgument('crazysim_model', default_value='cf21B_500'),
+        DeclareLaunchArgument(
+            'crazysim_limo_model_path',
+            default_value=os.path.expanduser(
+                '~/ros2_ws/src/limo_ros2/limo_description/mujoco/limo.xml')),
+        DeclareLaunchArgument(
+            'crazysim_limo_pose_port', default_value='19849'),
+        DeclareLaunchArgument('crazysim_server_delay', default_value='5.0'),
+        DeclareLaunchArgument(
+            'simulation_controller_delay', default_value='10.0'),
         DeclareLaunchArgument(
             'simulation_experiment_file',
             default_value=default_simulation_experiment_path),
         SetLaunchConfiguration(
-            'backend', 'sim', condition=IfCondition(LaunchConfiguration('use_sim'))),
+            'backend', 'cflib', condition=IfCondition(LaunchConfiguration('use_sim'))),
         SetLaunchConfiguration(
             'mocap', 'False', condition=IfCondition(LaunchConfiguration('use_sim'))),
         SetLaunchConfiguration(
             'rviz', 'True', condition=IfCondition(LaunchConfiguration('use_sim'))),
         OpaqueFunction(function=parse_yaml),
-        Node(
-            condition=IfCondition(LaunchConfiguration('use_sim')),
-            package='target_protection',
-            executable='simulation_experiment_controller',
-            name='simulation_experiment_controller',
-            output='screen',
-            parameters=[LaunchConfiguration('simulation_experiment_file')]
+        TimerAction(
+            period=LaunchConfiguration('simulation_controller_delay'),
+            actions=[Node(
+                condition=IfCondition(LaunchConfiguration('use_sim')),
+                package='target_protection',
+                executable='simulation_experiment_controller',
+                name='simulation_experiment_controller',
+                output='screen',
+                parameters=[LaunchConfiguration('simulation_experiment_file')]
+            )],
         ),
         Node(
             condition=LaunchConfigurationEquals('rviz', 'True'),
@@ -326,7 +467,7 @@ def generate_launch_description():
             name='rviz2',
             arguments=['-d', LaunchConfiguration('rviz_config_file')],
             parameters=[{
-                "use_sim_time": PythonExpression(["'", LaunchConfiguration('backend'), "' == 'sim'"]),
+                "use_sim_time": False,
             }]
         ),
     ])

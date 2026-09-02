@@ -22,6 +22,7 @@ class SimulationExperimentController(Node):
         self.declare_parameter('evade_time', 15.0)
         self.declare_parameter('evader_desengage', 22.0)
         self.declare_parameter('land_time', 30.0)
+        self.declare_parameter('start_limo_time', 18.0)
 
         self.experiment_type = str(
             self.get_parameter('experiment_type').value).strip().lower()
@@ -35,7 +36,7 @@ class SimulationExperimentController(Node):
         self.evader_desengage = float(
             self.get_parameter('evader_desengage').value)
         self.land_time = float(self.get_parameter('land_time').value)
-
+        self.start_limo_time = float(self.get_parameter('start_limo_time').value)
         self._validate_schedule()
 
         self.defenders_takeoff_pub = self.create_publisher(
@@ -43,6 +44,7 @@ class SimulationExperimentController(Node):
         self.evader_takeoff_pub = self.create_publisher(
             Bool, '/evader_takeoff', 10)
         self.encircle_pub = self.create_publisher(Bool, '/encircle', 10)
+        self.start_limo_pub = self.create_publisher(Bool, '/start_limo', 10)
         self.evade_pub = self.create_publisher(Bool, '/evade', 10)
         self.landing_pub = self.create_publisher(Bool, '/landing', 10)
 
@@ -61,6 +63,7 @@ class SimulationExperimentController(Node):
             'evade_time': self.evade_time,
             'evader_desengage': self.evader_desengage,
             'land_time': self.land_time,
+            'start_limo_time': self.start_limo_time,
         }
         if any(value < 0.0 for value in times.values()):
             raise ValueError('Simulation experiment times cannot be negative.')
@@ -93,6 +96,8 @@ class SimulationExperimentController(Node):
             'encircle', self.encirclement_time, self.encircle_pub, True)
         self._publish_once(
             'evade', self.evade_time, self.evade_pub, True)
+        self._publish_once(
+            'start_limo', self.start_limo_time, self.start_limo_pub, True)
 
         if self.experiment_type == 'give up':
             self._publish_once(

@@ -2,6 +2,8 @@
 
 import math
 import random
+import socket
+import struct
 
 from geometry_msgs.msg import PoseStamped, TransformStamped
 
@@ -34,7 +36,10 @@ class SimPointMass(Node):
         self.declare_parameter('update_hz', 20.0)
         self.declare_parameter('random_seed', -1)
         self.declare_parameter('circle_radius', 2.0)
-        self.declare_parameter('angular_velocity', 0.5)
+        self.declare_parameter('angular_velocity', 0.2)
+        self.declare_parameter('mujoco_pose_enabled', False)
+        self.declare_parameter('mujoco_host', '127.0.0.1')
+        self.declare_parameter('mujoco_pose_port', 19849)
 
         self.target_name = str(self.get_parameter('name').value)
         self.reference_frame = str(
@@ -55,6 +60,11 @@ class SimPointMass(Node):
             self.get_parameter('circle_radius').value)
         self.angular_velocity = float(
             self.get_parameter('angular_velocity').value)
+        self.mujoco_pose_enabled = bool(
+            self.get_parameter('mujoco_pose_enabled').value)
+        mujoco_host = str(self.get_parameter('mujoco_host').value)
+        mujoco_pose_port = int(
+            self.get_parameter('mujoco_pose_port').value)
 
         if self.half_extent <= 0.0:
             raise ValueError('half_extent must be positive.')
@@ -92,10 +102,16 @@ class SimPointMass(Node):
         )
         self.pose_publisher = self.create_publisher(
             PoseStamped, f'/{self.target_name}/pose', pose_qos)
-        self.encircle_subscription = self.create_subscription(
-            Bool, '/encircle', self._encircle_callback, 10)
+        self.start_limo_subscription = self.create_subscription(
+            Bool, '/start_limo', self._start_limo_callback, 10)
         self.tf_broadcaster = TransformBroadcaster(self)
         self.timer = self.create_timer(self.time_step, self._timer_callback)
+        self._mujoco_socket = None
+        self._mujoco_destination = None
+        if self.mujoco_pose_enabled:
+            self._mujoco_socket = socket.socket(
+                socket.AF_INET, socket.SOCK_DGRAM)
+            self._mujoco_destination = (mujoco_host, mujoco_pose_port)
 
         self.circle_active = False
         self.circle_center = [0.0, 0.0]
@@ -105,8 +121,8 @@ class SimPointMass(Node):
             f'{self.target_name} point mass initialized at '
             f'({self.position[0]:.3f}, {self.position[1]:.3f}, {self.height:.3f})')
 
-    def _encircle_callback(self, msg):
-        """Start circular target motion on the first true encircle flag."""
+    def _start_limo_callback(self, msg):
+        """Start circular target motion on the first true start_limo flag."""
         if not msg.data or self.circle_active:
             return
 
@@ -167,6 +183,32 @@ class SimPointMass(Node):
         transform.transform.translation.z = pose.pose.position.z
         transform.transform.rotation = pose.pose.orientation
         self.tf_broadcaster.sendTransform(transform)
+
+        if self._mujoco_socket is not None:
+            packet = struct.pack(
+                '<7d',
+                pose.pose.position.x,
+                pose.pose.position.y,
+                pose.pose.position.z,
+                pose.pose.orientation.w,
+                pose.pose.orientation.x,
+                pose.pose.orientation.y,
+                pose.pose.orientation.z,
+            )
+            try:
+                self._mujoco_socket.sendto(
+                    packet, self._mujoco_destination)
+            except OSError as error:
+                self.get_logger().warning(
+                    f'Could not send LIMO pose to MuJoCo: {error}',
+                    throttle_duration_sec=5.0)
+
+    def destroy_node(self):
+        """Close the optional MuJoCo transport before destroying the node."""
+        if self._mujoco_socket is not None:
+            self._mujoco_socket.close()
+            self._mujoco_socket = None
+        return super().destroy_node()
 
 
 def main(args=None):

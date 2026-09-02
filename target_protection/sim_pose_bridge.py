@@ -56,11 +56,21 @@ class SimPoseBridge(Node):
             NamedPoseArray, output_topic, poses_qos)
         self.subscription = self.create_subscription(
             TFMessage, input_topic, self._tf_callback, tf_qos)
+        self.missing_pose_timer = self.create_timer(
+            2.0, self._report_missing_poses)
 
         robots = ', '.join(sorted(self.robot_names)) or 'all direct child frames'
         self.get_logger().info(
             f'Bridging {input_topic} to {output_topic} in frame '
             f'{self.reference_frame} for {robots}')
+
+    def _report_missing_poses(self):
+        """Report the frames that currently prevent a complete publication."""
+        missing = self.robot_names.difference(self.latest_poses)
+        if missing:
+            self.get_logger().warning(
+                '/poses is waiting for TF frames: '
+                + ', '.join(sorted(missing)))
 
     @staticmethod
     def _normalized_frame(frame_id):

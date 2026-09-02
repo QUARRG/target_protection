@@ -333,16 +333,12 @@ class PipelineComplete(Node):
         self.detection_pub = self.create_publisher(Bool, '/evader_detection', 10)
         self.color_pub = self.create_publisher(String,'/'+ self.robot + '/color_led', 10)
 
-        if self.use_sim:
-            self.info('Simulation enabled: skipping arm service verification.')
-        else:
-            # Arming all drones
-            self.arm_client = self.create_client(Arm, self.robot + '/arm')
-            # Wait until the service is available
-            while not self.arm_client.wait_for_service(timeout_sec=1.0):
-                self.get_logger().info('Service not available, waiting again...')
-            self.arm()
-            time.sleep(2)
+        # Arm the CrazySim firmware through the Crazyswarm2 server.
+        self.arm_client = self.create_client(Arm, self.robot + '/arm')
+        while not self.arm_client.wait_for_service(timeout_sec=1.0):
+            self.get_logger().info('Arm service not available, waiting again...')
+        self.arm()
+        time.sleep(2)
 
         self.info('Follow unicycle encirclement node has been started.')
         # Timer of the main loop
@@ -778,8 +774,6 @@ class PipelineComplete(Node):
         ''' Reboot the system. '''
         req = Arm.Request()
         req.arm = True
-        self.arm_client.call_async(req)
-        # Call the service and get the response asynchronously
         future = self.arm_client.call_async(req)
         # Wait for the result and handle the response
         rclpy.spin_until_future_complete(self, future)
