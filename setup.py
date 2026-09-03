@@ -22,13 +22,15 @@ setup(
     maintainer_email='dimitriasilveria.ds@gmail.com',
     description='TODO: Package description',
     license='TODO: License declaration',
-    tests_require=['pytest'],
     entry_points={
         'console_scripts': [
             'agents_order = target_protection.agents_order:main',
             'gps_scanner_ii = target_protection.gps_scanner_ii:main',
+            'sim_pose_bridge = target_protection.sim_pose_bridge:main',
+            'sim_point_mass = target_protection.sim_point_mass:main',
             'evader = target_protection.evader:main',
-            'pipeline_complete = target_protection.pipeline_complete:main'
+            'pipeline_complete = target_protection.pipeline_complete:main',
+            'simulation_experiment_controller = target_protection.simulation_experiment_controller:main'
         ],
     },
 )

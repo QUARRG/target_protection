@@ -30,6 +30,7 @@ class Evader(Node):
         self.declare_parameter('others.frame_id', 'world')
         self.declare_parameter('target', 'LIMO')
         self.declare_parameter('trajectory','follow_limo')
+        self.declare_parameter('use_sim', False)
 
         self.robot    = str(self.get_parameter('robot').value)
         self.hover_height = 2.0 
@@ -37,6 +38,7 @@ class Evader(Node):
         self.frame_id = str(self.get_parameter('others.frame_id').value)
         self.target = str(self.get_parameter('target').value)
         self.trajectory = str(self.get_parameter('trajectory').value)
+        self.use_sim = bool(self.get_parameter('use_sim').value)
         self.color = '0x8E1F20' #red color for evader
 
         # Reboot client
@@ -79,6 +81,7 @@ class Evader(Node):
         self.has_initial_pose = False
         self.has_final = False
         self.land_flag = False
+        self.takeoff_flag = not self.use_sim
 
         self.final_pose   = np.zeros(3)
         self.current_pose = np.zeros(3)
@@ -107,6 +110,12 @@ class Evader(Node):
             self._evade_callback,
             10)
 
+        self.create_subscription(
+            Bool,
+            '/evader_takeoff',
+            self._takeoff_callback,
+            10)
+
         poses_qos_deadline = 100.0  # example Hz
 
         qos_profile = QoSProfile(
@@ -124,11 +133,10 @@ class Evader(Node):
                 # Wait until order is received
         while (not self.has_initial_pose):
             rclpy.spin_once(self, timeout_sec=0.1)
-        # Arming all drones
+        # Arm the CrazySim firmware through the Crazyswarm2 server.
         self.arm_client = self.create_client(Arm, self.robot + '/arm')
-        # Wait until the service is available
         while not self.arm_client.wait_for_service(timeout_sec=1.0):
-            self.get_logger().info('Service not available, waiting again...')
+            self.get_logger().info('Arm service not available, waiting again...')
         self.arm()
         time.sleep(2)
 
@@ -147,7 +155,7 @@ class Evader(Node):
 
             # Take-off state
             if self.state == 0:
-                if self.has_initial_pose:
+                if self.has_initial_pose and self.takeoff_flag:
                     self.takeoff()
                     self.color_pub.publish(String(data=self.color))
 
@@ -207,9 +215,9 @@ class Evader(Node):
                 else:
                     # time.sleep(2)
                     self.reboot()
-                    self.info('Exiting circle node')  
-                    self.destroy_node()
-                    rclpy.shutdown()  
+                    self.info('Exiting circle node')
+                    self.timer.cancel()
+                    rclpy.shutdown()
 
         except KeyboardInterrupt:
             self.info('Exiting open loop command node')
@@ -289,12 +297,15 @@ class Evader(Node):
             self.info('Evade command received, but data is False. No action taken.')
             self.detection_pub.publish(Bool(data=False))
             self.land_flag = True
+
+    def _takeoff_callback(self, msg):
+        '''Enable the evader's takeoff sequence.'''
+        self.takeoff_flag = msg.data
+
     def arm(self):
         ''' Reboot the system. '''
         req = Arm.Request()
         req.arm = True
-        self.arm_client.call_async(req)
-        # Call the service and get the response asynchronously
         future = self.arm_client.call_async(req)
         # Wait for the result and handle the response
         rclpy.spin_until_future_complete(self, future)
@@ -339,9 +350,14 @@ class Evader(Node):
 def main():
     rclpy.init()
     evader = Evader()
-    rclpy.spin(evader)
-    evader.destroy_node()
-    rclpy.shutdown()
+    try:
+        rclpy.spin(evader)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        evader.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':

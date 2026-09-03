@@ -77,8 +77,10 @@ Create a ROS 2 workspace and clone all source dependencies into `src`:
 mkdir -p ~/ros2_ws/src
 cd ~/ros2_ws/src
 
-git clone --recursive https://github.com/IMRCLab/crazyswarm2.git
+git clone --recursive https://github.com/dimitriasilveria/crazyswarm2.git
 git clone --recursive https://github.com/IMRCLab/motion_capture_tracking.git
+git clone --recursive https://github.com/dimitriasilveria/CrazySim.git
+git clone https://github.com/dimitriasilveria/controller_pkg.git
 git clone --branch master https://github.com/paaraujo/crazy_encirclement_interfaces.git
 git clone https://github.com/QUARRG/target_protection.git
 ```
@@ -120,12 +122,38 @@ Launch the complete experiment with the C++ Crazyflie backend:
 ros2 launch target_protection pipeline_complete_launch.py backend:=cpp mocap:=True rviz:=False
 ```
 
-Alternative launch arguments include `backend:=cflib` and `backend:=sim`. The simulation backend additionally requires the Crazyswarm2 simulation dependencies and Crazyflie firmware Python bindings. Configuration files can be overridden explicitly:
+The Python server can be selected with `backend:=cflib`. To run in simulation, use the single `use_sim` flag; it selects `backend:=sim`, disables motion capture, enables RViz, and selects the firmware PID controller required by world-frame velocity commands:
+
+```bash
+ros2 launch target_protection pipeline_complete_launch.py use_sim:=True
+```
+
+Simulation experiment events are published automatically according to
+`config/simulation_experiment.yaml`. The configured times are measured in
+seconds from the simulation experiment controller's startup:
+
+- `defenders_takeoff_time` publishes `True` on `/defenders_takeoff`.
+- `evader_takeoff_time` publishes `True` on `/evader_takeoff`.
+- `encirclement_time` publishes `True` on `/encircle`.
+- `evade_time` publishes `True` on `/evade`.
+- `land_time` publishes `True` on `/landing`.
+- When `experiment_type` is `give up`, `evader_desengage` publishes `False`
+  on `/evade`.
+
+The simulation backend additionally requires the Crazyswarm2 simulation dependencies and Crazyflie firmware Python bindings. Configuration files can be overridden explicitly:
 
 ```bash
 ros2 launch target_protection pipeline_complete_launch.py \
   crazyflies_yaml_file:=/path/to/crazyflies.yaml \
   motion_capture_yaml_file:=/path/to/motion_capture.yaml
+```
+
+A different experiment schedule can be selected with:
+
+```bash
+ros2 launch target_protection pipeline_complete_launch.py \
+  use_sim:=True \
+  simulation_experiment_file:=/path/to/simulation_experiment.yaml
 ```
 
 Mission commands can be sent from separate terminals:

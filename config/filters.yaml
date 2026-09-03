@@ -1,20 +1,3 @@
-
-FilterGPS:
-  # Kalman filter parameters
-  P: [0.0001, 0.0001, 0.25, 0.15]
-  Q: [0.0, 0.0, 0.0001, 0.0]
-  V: [0.1, 0.1, 0.1]
-  predict_hz: 100.0
-  update_hz: 10.0
-  seed: 60
-  # Parameters for circle distortion
-  embedding_fn_name: modelE
-  frame_id: world
-  hover_height: 0.2  # meters
-  radius_nominal: 0.5  # meters
-  omega_nominal: 0.6  # radians per second
-  k_phi: 1.0
-
 FilterRelative:
   # Kalman filter parameters
   P_ego: [0.0001, 0.0001, 0.25, 0.15]
@@ -47,7 +30,7 @@ FilterUnicycle:
   frame_id: world
   hover_height: 0.3  # meters
   zupt_threshold: 0.00001 # m/s
-  k_phi: 10.0
+  k_phi: 1.0
 
 FollowLimoEncirclementFilterUnicycle:
   whoisthetarget: limo
@@ -56,7 +39,7 @@ FollowLimoEncirclementFilterUnicycle:
     # [x, y, theta, omega, v, z_ground]
     P: [1.0, 1.0, 0.15, 0.5, 0.2, 0.01]
     Q: [0.01, 0.01, 0.05, 0.1, 0.1, 0.01]
-    V: [0.02, 0.02, 0.02]
+    V: [0.002, 0.002, 0.002]
   target_drone:
     # [x, y, theta, omega, v, z_ground]
     P: [1.0, 1.0, 0.15, 0.5, 0.2, 0.1]
@@ -70,14 +53,14 @@ FollowLimoEncirclementFilterUnicycle:
     Noise_relative: [0.02, 0.02, 0.02]  # m, m, m (x, y, z)
   # Other parameters
   controls:
-    radius_nominal: 0.5      # meters
+    radius_nominal: 1.0      # meters
     omega_nominal: 1.0        # radians per second
     hover_height: 0.5        # meters
     encirclement_height: 0.5  # meters
     zupt_threshold: 0.005     # m/s
-    k_phi: 2.1              # phase controller gain
+    k_phi: 1.0              # phase controller gain
     k_r: 15.0                 # radius controller gain
-    k_omega: 1.1             # desired omega velocity controller gain
+    k_omega: 1.2             # desired omega velocity controller gain
   flocking:
     k_v: 0.35                  # Flocking gain
     safe_distance_gain: 1.5   # Gain to be used with the nominal radius
@@ -86,19 +69,3 @@ FollowLimoEncirclementFilterUnicycle:
     update_hz: 10.0
     seed: 10
     frame_id: world  
-
-FilterSpatial:
-  # General parameters
-  predict_hz: 100.0
-  update_hz: 10.0
-  seed: 10
-  # Parameters for 3D circle distortion
-  embedding_fn_name: modelE  # Always modelE for spatial filter
-  frame_id: world
-  hover_height: 1.2  # meters
-  radius_nominal: 0.75  # meters
-  omega_z_nominal: 0.6  # radians per second (planar rotation around z)
-  omega_y_nominal: 0.0  # radians per second (spatial rotation around y)
-  k_phi_z: 1.0  # Gain for planar phase controller
-  k_phi_y: 0.5  # Gain for spatial rotation controller
-  adjoint_angle: 0.0  # Initial guess for y-axis rotation angle

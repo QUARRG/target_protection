@@ -13,12 +13,16 @@
   <test_depend>python3-pytest</test_depend>
 
   <depend>crazyflie_interfaces</depend>
+  <depend>rclpy</depend>
   <depend>std_msgs</depend>
   <depend>geometry_msgs</depend>
+  <depend>tf2_msgs</depend>
+  <depend>tf2_ros</depend>
   <depend>motion_capture_tracking_interfaces</depend>
   <depend>crazyflie</depend>
   <exec_depend>crazyflie_description</exec_depend>
   <depend>crazy_encirclement_interfaces</depend>
+  <depend>controller_pkg</depend>
 
   <export>
     <build_type>ament_python</build_type>

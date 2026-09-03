@@ -32,11 +32,13 @@ class PipelineComplete(Node):
         self.declare_parameter('whoisthetarget', 'LIMO')
         self.declare_parameter('target_ground', 'LIMO')
         self.declare_parameter('target_uav', 'C23')
+        self.declare_parameter('use_sim', False)
 
         self.robot = str(self.get_parameter('robot').value)
         self.number_of_agents = int(self.get_parameter('number_of_agents').value)
         self.target_ground = str(self.get_parameter('target_ground').value)
         self.target_uav = str(self.get_parameter('target_uav').value)
+        self.use_sim = bool(self.get_parameter('use_sim').value)
         self.target = self.target_ground #starts with limo as target
 
         # Filter parameters for target limo (nested under target_limo)
@@ -124,6 +126,7 @@ class PipelineComplete(Node):
         self.land_flag = False
         self.has_order = False
         self.evader_flag = False
+        self.takeoff_flag = not self.use_sim
         self.dist_limo_uav = 4.0
         self.pursuit_color = '0x12239E'
         self.surveillance_color = '0xAAC00'
@@ -156,6 +159,12 @@ class PipelineComplete(Node):
             Bool,
             '/encircle',
             self._encircle_callback,
+            10)
+
+        self.create_subscription(
+            Bool,
+            '/defenders_takeoff',
+            self._takeoff_callback,
             10)
         
         self.create_subscription(
@@ -200,7 +209,8 @@ class PipelineComplete(Node):
         # Wait until order and initial pose are received
         while (not self.has_order and not self.has_initial_pose):
             rclpy.spin_once(self, timeout_sec=0.1)
-        
+
+        self.get_logger().info(f'Initial pose received: {self.T_init[0:3, 3]}')
         # Initialize filter for the drone
         self.filter_unicycle_drone = None
 
@@ -323,11 +333,10 @@ class PipelineComplete(Node):
         self.detection_pub = self.create_publisher(Bool, '/evader_detection', 10)
         self.color_pub = self.create_publisher(String,'/'+ self.robot + '/color_led', 10)
 
-        # Arming all drones
+        # Arm the CrazySim firmware through the Crazyswarm2 server.
         self.arm_client = self.create_client(Arm, self.robot + '/arm')
-        # Wait until the service is available
         while not self.arm_client.wait_for_service(timeout_sec=1.0):
-            self.get_logger().info('Service not available, waiting again...')
+            self.get_logger().info('Arm service not available, waiting again...')
         self.arm()
         time.sleep(2)
 
@@ -340,7 +349,7 @@ class PipelineComplete(Node):
         try:
             # Take-off state
             if self.state == 0:
-                if self.has_initial_pose:
+                if self.has_initial_pose and self.takeoff_flag:
                     self.takeoff()
                     self.color_pub.publish(String(data=self.surveillance_color))
 
@@ -497,9 +506,9 @@ class PipelineComplete(Node):
                         self.i_landing += 1
                     else:
                         self.reboot()
-                        self.info('Exiting node')  
-                        self.destroy_node()
-                        rclpy.shutdown()   
+                        self.info('Exiting node')
+                        self.timer.cancel()
+                        rclpy.shutdown()
 
         except KeyboardInterrupt:
             self.info('Exiting open loop command node')
@@ -743,6 +752,10 @@ class PipelineComplete(Node):
         ''' Callback to initiate encirclement procedure. '''
         self.state = 2
 
+    def _takeoff_callback(self, msg):
+        '''Enable the defenders' takeoff sequence.'''
+        self.takeoff_flag = msg.data
+
     def hover(self):
         ''' Hovering procedure at the hover height. '''
         self.send_position(np.array([self.T_init[0, 3], self.T_init[1, 3], self.T_init[2, 3] + self.hover_height]))
@@ -761,8 +774,6 @@ class PipelineComplete(Node):
         ''' Reboot the system. '''
         req = Arm.Request()
         req.arm = True
-        self.arm_client.call_async(req)
-        # Call the service and get the response asynchronously
         future = self.arm_client.call_async(req)
         # Wait for the result and handle the response
         rclpy.spin_until_future_complete(self, future)
@@ -815,9 +826,14 @@ class PipelineComplete(Node):
 def main():
     rclpy.init()
     follower = PipelineComplete()
-    rclpy.spin(follower)
-    follower.destroy_node()
-    rclpy.shutdown()
+    try:
+        rclpy.spin(follower)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        follower.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':
