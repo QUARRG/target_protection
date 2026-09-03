@@ -302,7 +302,7 @@ def parse_yaml(context):
                 'initial_x': float(sim_target_position[0]),
                 'initial_y': float(sim_target_position[1]),
                 'circle_radius': 2.0,
-                'angular_velocity': 0.1,
+                'angular_velocity': 0.2,
                 'mujoco_pose_enabled': start_crazysim,
                 'mujoco_pose_port': limo_pose_port,
                 'use_sim_time': False,

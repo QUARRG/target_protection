@@ -77,8 +77,10 @@ Create a ROS 2 workspace and clone all source dependencies into `src`:
 mkdir -p ~/ros2_ws/src
 cd ~/ros2_ws/src
 
-git clone --recursive https://github.com/IMRCLab/crazyswarm2.git
+git clone --recursive https://github.com/dimitriasilveria/crazyswarm2.git
 git clone --recursive https://github.com/IMRCLab/motion_capture_tracking.git
+git clone --recursive https://github.com/dimitriasilveria/CrazySim.git
+git clone https://github.com/dimitriasilveria/controller_pkg.git
 git clone --branch master https://github.com/paaraujo/crazy_encirclement_interfaces.git
 git clone https://github.com/QUARRG/target_protection.git
 ```
