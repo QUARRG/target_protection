@@ -13,7 +13,7 @@ The experiment has four operational stages:
 3. **Attacker encirclement:** the defenders track and encircle the aerial target on an altitude-adaptive plane.
 4. **Neutralization:** when the attacker enters the protected red zone, the encirclement radius collapses toward it.
 
-The launch file starts one estimation-and-control pipeline and one relative-measurement emulator per defender, plus the attacker, ordering, Crazyflie server, watchdog, and motion-capture nodes.
+The launch file starts one estimation-and-control pipeline and one relative-measurement emulator per defender, plus the attacker, ordering, Crazyflie server, and watchdog nodes. In hardware mode it obtains poses from motion capture. In simulation mode it instead starts CrazySim's MuJoCo/SITL environment and converts the simulated vehicle transforms to the same `/poses` interface used by the experiment nodes.
 
 ## Main ROS 2 nodes
 
@@ -24,7 +24,10 @@ The launch file starts one estimation-and-control pipeline and one relative-meas
 | `agents_order` | Determines the initial circular ordering of the defenders and continuously publishes the swarm order and distance to each leader. |
 | `evader` | Controls the experimental attacking Crazyflie and publishes its detection state. |
 | `motion_capture_tracking_node` | Third-party node that reads Vicon or another supported motion-capture system and publishes named rigid-body poses. |
-| `crazyflie_server` / `watch_dog.py` | Third-party Crazyswarm2 nodes for Crazyflie communication, command forwarding, and safety monitoring. |
+| `crazyflie_server` / `watch_dog` | Crazyswarm2 server and `controller_pkg` watchdog nodes for Crazyflie communication, command forwarding, and safety monitoring. |
+| `sim_pose_bridge` | In CrazySim mode, collects the drone and LIMO transforms from `/tf` and publishes a complete `NamedPoseArray` on `/poses`. |
+| `sim_point_mass` | Controls the kinematic LIMO model, publishes `/LIMO/pose` and its TF, and sends its pose to the MuJoCo process. |
+| `simulation_experiment_controller` | Publishes the timed mission events configured in `simulation_experiment.yaml`. |
 
 `filters.py` provides the invariant/unicycle target estimator and relative phase-difference filter used by `pipeline_complete`; it is a library module rather than a standalone node.
 
@@ -34,7 +37,10 @@ The launch file starts one estimation-and-control pipeline and one relative-meas
 
 | Name | Type | Producer → consumer | Description |
 | --- | --- | --- | --- |
-| `/poses` | `motion_capture_tracking_interfaces/NamedPoseArray` | motion capture → all experiment nodes | Ground-truth rigid-body poses. In this implementation they are transformed and noised to emulate relative sensing. |
+| `/poses` | `motion_capture_tracking_interfaces/NamedPoseArray` | motion capture or `sim_pose_bridge` → all experiment nodes | Ground-truth rigid-body poses. In this implementation they are transformed and noised to emulate relative sensing. |
+| `/tf` | `tf2_msgs/TFMessage` | Crazyflie server and `sim_point_mass` → `sim_pose_bridge` | Simulation transforms used to construct `/poses`. |
+| `/LIMO/pose` | `geometry_msgs/PoseStamped` | `sim_point_mass` → monitoring | Pose of the simulated ground vehicle. |
+| `/start_limo` | `std_msgs/Bool` | experiment controller/operator → `sim_point_mass` | Starts the LIMO's circular trajectory. |
 | `/{robot}/gps_scanner_relative_poses` | `motion_capture_tracking_interfaces/NamedPoseArray` | `gps_scanner_ii` → `pipeline_complete` | Target and neighbor poses expressed relative to the defender. |
 | `/{robot}/gps_scanner_global_poses` | `motion_capture_tracking_interfaces/NamedPoseArray` | `gps_scanner_ii` → monitoring | The same detected bodies expressed in the defender's initial frame. |
 | `/{robot}/initial_pose` | `geometry_msgs/PoseStamped` | `gps_scanner_ii` → `pipeline_complete` | Latched initial pose used to define the local reference frame. |
@@ -59,7 +65,9 @@ Additional filter-state topics are published below `/{robot}/unicycle/.../filter
 - Ubuntu 22.04 with ROS 2 Humble, or Ubuntu 24.04 with ROS 2 Jazzy.
 - Python 3 and the Python packages `numpy`, `scipy`, `numpy-quaternion`, `PyYAML`, and `icecream`.
 - `colcon`, `rosdep`, and the standard ROS 2 Python build tools.
-- [Crazyswarm2](https://github.com/IMRCLab/crazyswarm2), which supplies `crazyflie`, `crazyflie_sim`, `crazyflie_interfaces`, the Crazyflie server, and watchdog. Follow its [official installation guide](https://imrclab.github.io/crazyswarm2/installation.html).
+- [Crazyswarm2](https://github.com/IMRCLab/crazyswarm2), which supplies `crazyflie`, `crazyflie_interfaces`, and the Crazyflie servers. The `crazyflie_sim` backend is **not** used by this simulation setup.
+- The [project CrazySim fork](https://github.com/dimitriasilveria/CrazySim), including its Crazyflie firmware submodule. CrazySim supplies the MuJoCo physics/visualization process and runs one firmware-in-the-loop instance per drone. The project fork contains the LIMO integration used by this launch.
+- [limo_ros2](https://github.com/agilexrobotics/limo_ros2), with this project's MuJoCo adaptation. This workspace uses `limo_description/mujoco/limo.xml`; the Gazebo plugins from the upstream LIMO packages are not involved in a CrazySim run.
 - [motion_capture_tracking](https://github.com/IMRCLab/motion_capture_tracking), which supplies the motion-capture node and `motion_capture_tracking_interfaces`. It supports Vicon, Qualisys, OptiTrack, VRPN, NOKOV, FZMotion, and Motion Analysis. It can also be installed as `ros-<DISTRO>-motion-capture-tracking` where available.
 - [crazy_encirclement_interfaces](https://github.com/paaraujo/crazy_encirclement_interfaces/tree/master), the accompanying ROS 2 interface package containing `FilterUnicycleState` and `Metadata`. This package must be placed in the same workspace.
 
@@ -80,20 +88,55 @@ cd ~/ros2_ws/src
 git clone --recursive https://github.com/dimitriasilveria/crazyswarm2.git
 git clone --recursive https://github.com/IMRCLab/motion_capture_tracking.git
 git clone --recursive https://github.com/dimitriasilveria/CrazySim.git
+git clone --branch humble https://github.com/agilexrobotics/limo_ros2.git
 git clone https://github.com/dimitriasilveria/controller_pkg.git
 git clone --branch master https://github.com/paaraujo/crazy_encirclement_interfaces.git
 git clone https://github.com/QUARRG/target_protection.git
 ```
 
-Install dependencies and build:
+The upstream LIMO repository does not itself provide the custom `limo_description/mujoco/limo.xml` used here. Preserve the adapted `limo_ros2` checkout (including that model and its `limo_description/CMakeLists.txt` install rule), or retrieve those changes from the project branch before launching the simulation.
+
+Keep the top-level Crazyswarm2 checkout as the ROS dependency. CrazySim also contains a Crazyswarm2 submodule, but the two copies must not be discovered, built, or sourced in the same ROS environment. This workspace keeps the complete CrazySim source tree out of `colcon` package discovery:
+
+```bash
+touch ~/ros2_ws/src/CrazySim/COLCON_IGNORE
+```
+
+Install the ROS dependencies and build the workspace with the system Python. Do not activate the CrazySim virtual environment for this build; ROS interface generation on Jazzy requires ROS's compatible EmPy installation rather than a venv package named `em`.
 
 ```bash
 cd ~/ros2_ws
 source /opt/ros/$ROS_DISTRO/setup.bash
 rosdep install --from-paths src --ignore-src -r -y
 python3 -m pip install numpy scipy numpy-quaternion PyYAML icecream
-colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release
+colcon build --symlink-install --cmake-args \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DPython3_EXECUTABLE=/usr/bin/python3
 source install/setup.bash
+```
+
+Create the Python environment used by the CrazySim launcher and CFLib server. The launch file defaults to `~/venvs/crazyflie`:
+
+```bash
+python3 -m venv ~/venvs/crazyflie
+source ~/venvs/crazyflie/bin/activate
+python -m pip install --upgrade pip
+git clone https://github.com/bitcraze/crazyflie-lib-python.git /tmp/crazyflie-lib-python
+python -m pip install /tmp/crazyflie-lib-python
+python -m pip install mujoco numpy Jinja2
+deactivate
+```
+
+Install CFLib from its current source tree as shown above: CrazySim's UDP driver support may be newer than the released `cflib` package on PyPI.
+
+Build the CrazySim SITL firmware once (and rebuild it after firmware changes):
+
+```bash
+cd ~/ros2_ws/src/CrazySim/crazyflie-firmware
+mkdir -p sitl_make/build
+cd sitl_make/build
+cmake ..
+cmake --build . -j4
 ```
 
 For real Crazyflies, also configure the Crazyradio USB permissions and firmware as described by Crazyswarm2.
@@ -122,11 +165,48 @@ Launch the complete experiment with the C++ Crazyflie backend:
 ros2 launch target_protection pipeline_complete_launch.py backend:=cpp mocap:=True rviz:=False
 ```
 
-The Python server can be selected with `backend:=cflib`. To run in simulation, use the single `use_sim` flag; it selects `backend:=sim`, disables motion capture, enables RViz, and selects the firmware PID controller required by world-frame velocity commands:
+The Python server can be selected on hardware with `backend:=cflib`.
+
+### CrazySim simulation
+
+Simulation uses the same experiment nodes and ROS command interfaces as hardware, but replaces the physical vehicles and motion-capture source as follows:
+
+| Layer | Simulation implementation |
+| --- | --- |
+| Vehicle physics and visualization | CrazySim with MuJoCo |
+| Flight controller | Crazyflie firmware running in SITL, one process per vehicle |
+| ROS-to-firmware connection | Crazyswarm2 `crazyflie_server_py` with `backend:=cflib` over UDP |
+| Drone poses | Firmware pose logging → Crazyflie server TF → `sim_pose_bridge` → `/poses` |
+| Ground vehicle | Kinematic LIMO MuJoCo model driven by `sim_point_mass` |
+
+Run the complete simulation with:
 
 ```bash
 ros2 launch target_protection pipeline_complete_launch.py use_sim:=True
 ```
+
+`use_sim:=True` forces `backend:=cflib`, disables motion capture, enables RViz, and starts CrazySim by default. It does **not** select Crazyswarm2's `backend:=sim` or launch the `crazyflie_sim` server. The CrazySim MuJoCo window and RViz are therefore shown together.
+
+The enabled robots in `crazyflies.yaml` must use consecutive UDP ports in their YAML order, beginning at port 19850. For four enabled robots, use `udp://127.0.0.1:19850` through `udp://127.0.0.1:19853`. The launch validates this mapping because CrazySim assigns these ports by spawn index.
+
+At startup, the launch generates a randomized layout and writes the exact drone coordinates to `/tmp/target_protection_crazysim_layout.txt` before starting MuJoCo:
+
+- The LIMO starts at a random nonzero point inside the 2 m by 2 m square centered at the origin.
+- Pursuers start around the LIMO with independently randomized phase and radius between `0.5 * radius_nominal` and `2.0 * radius_nominal`.
+- The evader starts at `evader_initial_distance` from the LIMO. Its default is 10 m and values below 4 m are rejected.
+- `simulation_layout_seed:=-1` produces a new random layout. Supply a nonnegative seed for a reproducible layout.
+
+The default CrazySim vehicle model is `cf21B_500`, the Crazyflie 2.1 Brushless model. Useful launch overrides include:
+
+```bash
+ros2 launch target_protection pipeline_complete_launch.py \
+  use_sim:=True \
+  simulation_layout_seed:=42 \
+  evader_initial_distance:=6.0 \
+  crazysim_model:=cf21B_500
+```
+
+If the workspace, virtual environment, firmware, or LIMO model is installed elsewhere, override `crazysim_firmware_path`, `cflib_pythonpath`, `crazysim_python_bin`, or `crazysim_limo_model_path`. Set `start_crazysim:=False` only when attaching this launch to an already-running compatible CrazySim instance.
 
 Simulation experiment events are published automatically according to
 `config/simulation_experiment.yaml`. The configured times are measured in
@@ -135,12 +215,13 @@ seconds from the simulation experiment controller's startup:
 - `defenders_takeoff_time` publishes `True` on `/defenders_takeoff`.
 - `evader_takeoff_time` publishes `True` on `/evader_takeoff`.
 - `encirclement_time` publishes `True` on `/encircle`.
+- `start_limo_time` publishes `True` on `/start_limo`. The LIMO then follows a 2 m-radius circular path; the launch currently configures an angular velocity of 0.2 rad/s.
 - `evade_time` publishes `True` on `/evade`.
 - `land_time` publishes `True` on `/landing`.
 - When `experiment_type` is `give up`, `evader_desengage` publishes `False`
   on `/evade`.
 
-The simulation backend additionally requires the Crazyswarm2 simulation dependencies and Crazyflie firmware Python bindings. Configuration files can be overridden explicitly:
+Configuration files can be overridden explicitly:
 
 ```bash
 ros2 launch target_protection pipeline_complete_launch.py \
@@ -160,9 +241,20 @@ Mission commands can be sent from separate terminals:
 
 ```bash
 ros2 topic pub --once /encircle std_msgs/msg/Bool '{data: true}'
+ros2 topic pub --once /start_limo std_msgs/msg/Bool '{data: true}'
 ros2 topic pub --once /evade std_msgs/msg/Bool '{data: true}'
 ros2 topic pub --once /landing std_msgs/msg/Bool '{data: true}'
 ```
+
+For a quick state-path check during simulation:
+
+```bash
+ros2 topic hz /tf
+ros2 topic echo /poses --once
+ros2 topic echo /LIMO/pose --once
+```
+
+`/poses` is deliberately withheld until `sim_pose_bridge` has received a direct `world` TF for every enabled drone and for `LIMO`. A repeated `"/poses is waiting for TF frames"` warning therefore means the corresponding SITL instance or its firmware pose log is not reaching the CFLib server; it is not a motion-capture configuration problem.
 
 ## Citation
 
