@@ -44,13 +44,13 @@ FollowLimoEncirclementFilterUnicycle:
     # [x, y, theta, omega, v, z_ground]
     P: [1.0, 1.0, 0.15, 0.5, 0.2, 0.1]
     Q: [0.01, 0.01, 0.05, 0.1, 0.1, 0.2]
-    V: [0.002, 0.002, 0.002]
+    V: [0.02, 0.02, 0.02]
   # Kalman filter parameters for relative filter used by the drones
   relative:
     P_rel: [0.1, 0.1]      # rad, rad
     Q_rel: [0.07, 0.07]    # rad/s, rad/s
     V_rel: [0.01, 0.01]    # rad, rad
-    Noise_relative: [0.002, 0.002, 0.002]  # m, m, m (x, y, z)
+    Noise_relative: [0.02, 0.02, 0.02]  # m, m, m (x, y, z)
   # Other parameters
   controls:
     radius_nominal: 1.0      # meters
