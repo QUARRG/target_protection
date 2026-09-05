@@ -15,49 +15,6 @@ The experiment has four operational stages:
 
 The launch file starts one estimation-and-control pipeline and one relative-measurement emulator per defender, plus the attacker, ordering, Crazyflie server, and watchdog nodes. In hardware mode it obtains poses from motion capture. In simulation mode it instead starts CrazySim's MuJoCo/SITL environment and converts the simulated vehicle transforms to the same `/poses` interface used by the experiment nodes.
 
-## Main ROS 2 nodes
-
-| Executable | Purpose |
-| --- | --- |
-| `pipeline_complete` | Runs on each defender. It contains the target-state and inter-agent phase filters, adaptive encirclement controller, flocking transition, mission state machine, and Crazyflie command generation. |
-| `gps_scanner_ii` | Converts `/poses` into measurements expressed in each defender's initial/body-relative frame. It emulates the noisy relative sensor used by the algorithm and publishes the defender's latched initial pose. |
-| `agents_order` | Determines the initial circular ordering of the defenders and continuously publishes the swarm order and distance to each leader. |
-| `evader` | Controls the experimental attacking Crazyflie and publishes its detection state. |
-| `motion_capture_tracking_node` | Third-party node that reads Vicon or another supported motion-capture system and publishes named rigid-body poses. |
-| `crazyflie_server` / `watch_dog` | Crazyswarm2 server and `controller_pkg` watchdog nodes for Crazyflie communication, command forwarding, and safety monitoring. |
-| `sim_pose_bridge` | In CrazySim mode, collects the drone and LIMO transforms from `/tf` and publishes a complete `NamedPoseArray` on `/poses`. |
-| `sim_point_mass` | Controls the kinematic LIMO model, publishes `/LIMO/pose` and its TF, and sends its pose to the MuJoCo process. |
-| `simulation_experiment_controller` | Publishes the timed mission events configured in `simulation_experiment.yaml`. |
-
-`filters.py` provides the invariant/unicycle target estimator and relative phase-difference filter used by `pipeline_complete`; it is a library module rather than a standalone node.
-
-## Main topics and services
-
-`{robot}` denotes a defender name from `crazyflies.yaml` (for example, `C01`).
-
-| Name | Type | Producer → consumer | Description |
-| --- | --- | --- | --- |
-| `/poses` | `motion_capture_tracking_interfaces/NamedPoseArray` | motion capture or `sim_pose_bridge` → all experiment nodes | Ground-truth rigid-body poses. In this implementation they are transformed and noised to emulate relative sensing. |
-| `/tf` | `tf2_msgs/TFMessage` | Crazyflie server and `sim_point_mass` → `sim_pose_bridge` | Simulation transforms used to construct `/poses`. |
-| `/LIMO/pose` | `geometry_msgs/PoseStamped` | `sim_point_mass` → monitoring | Pose of the simulated ground vehicle. |
-| `/start_limo` | `std_msgs/Bool` | experiment controller/operator → `sim_point_mass` | Starts the LIMO's circular trajectory. |
-| `/{robot}/gps_scanner_relative_poses` | `motion_capture_tracking_interfaces/NamedPoseArray` | `gps_scanner_ii` → `pipeline_complete` | Target and neighbor poses expressed relative to the defender. |
-| `/{robot}/gps_scanner_global_poses` | `motion_capture_tracking_interfaces/NamedPoseArray` | `gps_scanner_ii` → monitoring | The same detected bodies expressed in the defender's initial frame. |
-| `/{robot}/initial_pose` | `geometry_msgs/PoseStamped` | `gps_scanner_ii` → `pipeline_complete` | Latched initial pose used to define the local reference frame. |
-| `/agents_order` | `crazyflie_interfaces/StringArray` | `agents_order` → defenders | Circular leader/follower ordering of the swarm. |
-| `/{robot}/distance_to_leader` | `std_msgs/Float32` | `agents_order` → monitoring | Current Euclidean distance to the preceding defender. |
-| `/encircle` | `std_msgs/Bool` | operator → defenders | Starts the encirclement mission. |
-| `/landing` | `std_msgs/Bool` | operator/defenders → experiment nodes | Requests landing. |
-| `/evade` | `std_msgs/Bool` | operator → `evader` | Starts the attacker's motion. |
-| `/evader_detection` | `std_msgs/Bool` | attacker/defenders → defenders | Signals attacker detection and mission transitions. |
-| `/{robot}/cmd_position` | `crazyflie_interfaces/Position` | controller → Crazyflie server | Position waypoint sent to a vehicle. |
-| `/{robot}/cmd_velocity_world` | `crazyflie_interfaces/VelocityWorld` | `pipeline_complete` → Crazyflie server | World-frame velocity command used by the defender controller. |
-| `/{robot}/relative/filtered/*` | `std_msgs/Float32` | filters/controller → monitoring | Estimated phase differences, angular velocity, radius, and radial correction. |
-| `/{robot}/arm` | `crazyflie_interfaces/srv/Arm` | experiment nodes → Crazyflie server | Arms a vehicle. |
-| `/{robot}/reboot` | `std_srvs/srv/Empty` | experiment nodes → Crazyflie server | Reboots a vehicle after landing. |
-
-Additional filter-state topics are published below `/{robot}/unicycle/.../filtered/` using messages from `crazy_encirclement_interfaces`.
-
 ## Requirements
 
 ### Software
